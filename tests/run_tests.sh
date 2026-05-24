@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Tiny-Habibi Test Suite — Comprehensive integration & unit tests
+# tiny-habibi Test Suite — Comprehensive integration & unit tests
 set -uo pipefail
 
 BINARY="${TINY_HABIBI_BINARY:-./build/bb}"

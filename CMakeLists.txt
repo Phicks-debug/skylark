@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(TinyHabibi VERSION 1.0.0 LANGUAGES CXX)
+project(tinyhabibi VERSION 1.0.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -8,7 +8,6 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 # ============================================================
 # Find Python and litert_lm package
 # ============================================================
-find_package(Python3 REQUIRED COMPONENTS Interpreter)
 
 # litert_lm package directory (can be overridden via -DLITERT_LM_DIR=...)
 # On macOS: ~/Library/Python/X.Y/lib/python/site-packages/litert_lm
@@ -16,17 +15,61 @@ find_package(Python3 REQUIRED COMPONENTS Interpreter)
 set(LITERT_LM_DIR "$ENV{LITERT_LM_DIR}" CACHE PATH "Path to litert_lm package directory (contains liblitert-lm.so/dylib)")
 
 if(NOT LITERT_LM_DIR)
-    find_package(Python3 REQUIRED)
-    execute_process(
-        COMMAND ${Python3_EXECUTABLE} -c "import litert_lm, os; print(os.path.dirname(litert_lm.__file__))"
-        OUTPUT_VARIABLE LITERT_LM_DIR
-        OUTPUT_STRIP_TRAILING_WHITESPACE
-        ERROR_VARIABLE _py_err
-    )
-    if(_py_err OR LITERT_LM_DIR STREQUAL "")
+    # Try to find litert_lm using pip first (more reliable across Python versions)
+    find_program(PIP_EXECUTABLE pip3)
+    if(NOT PIP_EXECUTABLE)
+        find_program(PIP_EXECUTABLE pip)
+    endif()
+    if(PIP_EXECUTABLE)
+        execute_process(
+            COMMAND ${PIP_EXECUTABLE} show litert-lm
+            OUTPUT_VARIABLE _pip_show
+            ERROR_QUIET
+        )
+        if(_pip_show MATCHES "Location: ([^\n]+)")
+            set(_pip_location "${CMAKE_MATCH_1}/litert_lm")
+            if(EXISTS "${_pip_location}")
+                set(LITERT_LM_DIR "${_pip_location}")
+            endif()
+        endif()
+    endif()
+
+    # Fallback: try Python-based detection with multiple Python versions
+    if(NOT LITERT_LM_DIR)
+        find_package(Python3 QUIET COMPONENTS Interpreter)
+        if(NOT Python3_FOUND)
+            message(FATAL_ERROR "Python3 not found. Install Python 3.9+ first.")
+        endif()
+        execute_process(
+            COMMAND ${Python3_EXECUTABLE} -c "import litert_lm, os; print(os.path.dirname(litert_lm.__file__))"
+            OUTPUT_VARIABLE LITERT_LM_DIR
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+            ERROR_VARIABLE _py_err
+        )
+        if(_py_err OR LITERT_LM_DIR STREQUAL "")
+            # Try common Python versions that may have litert_lm installed
+            foreach(_py_ver 3.12 3.11 3.10 3.9)
+                find_program(_py_exec python${_py_ver})
+                if(_py_exec)
+                    execute_process(
+                        COMMAND ${_py_exec} -c "import litert_lm, os; print(os.path.dirname(litert_lm.__file__))"
+                        OUTPUT_VARIABLE LITERT_LM_DIR
+                        OUTPUT_STRIP_TRAILING_WHITESPACE
+                        ERROR_QUIET
+                    )
+                    if(NOT LITERT_LM_DIR STREQUAL "")
+                        message(STATUS "Found litert_lm via python${_py_ver}")
+                        break()
+                    endif()
+                endif()
+            endforeach()
+        endif()
+    endif()
+
+    if(NOT LITERT_LM_DIR OR LITERT_LM_DIR STREQUAL "")
         message(FATAL_ERROR "Failed to locate litert_lm package.\n"
-            "Python error: ${_py_err}\n"
-            "Install with: pip install litert-lm")
+            "Install with: pip install litert-lm\n"
+            "Or specify manually: cmake -DLITERT_LM_DIR=/path/to/litert_lm")
     endif()
 endif()
 
@@ -159,7 +202,7 @@ install(TARGETS bb DESTINATION bin)
 
 # Print summary
 message(STATUS "==========================================")
-message(STATUS "Tiny-Habibi Build Configuration")
+message(STATUS "tiny-habibi Build Configuration")
 message(STATUS "==========================================")
 message(STATUS "  LitertLM lib : ${LITERT_LM_LIB}")
 message(STATUS "  LibCurl      : ${CURL_LIBRARIES}")

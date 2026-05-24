@@ -1,4 +1,4 @@
-// Tiny-Habibi - C++ CLI for running Gemma models with LiteRT-LM
+// tiny-habibi - C++ CLI for running Gemma models with LiteRT-LM
 // Features: streaming chat, voice input, image/video input,
 //            Tavily web search, model download, GPU backend
 
@@ -64,7 +64,7 @@ static void sigint_handler(int /*sig*/) {
 
 // ---- Help text ----
 static void print_help(const char* prog) {
-    std::cout << R"(Tiny-Habibi - Interactive CLI for Gemma models via LiteRT-LM
+    std::cout << R"(tiny-habibi - Interactive CLI for Gemma models via LiteRT-LM
 
 Usage: )" << prog << R"( [OPTIONS]
 
@@ -1091,7 +1091,7 @@ static void chat_loop(const Config& cfg) {
     // ---- Welcome ----
     std::cout << '\n';
     print_separator(Color::Dim);
-    cprintln("Tiny-Habibi - Type your message (Ctrl+C to cancel, Ctrl+D to exit)",
+    cprintln("tiny-habibi - Type your message (Ctrl+C to cancel, Ctrl+D to exit)",
             Color::BrightWhite);
     cprintln(std::string("Backend: ") + cfg.backend +
              (cfg.speculative_decoding ? " (speculative)" : "") +

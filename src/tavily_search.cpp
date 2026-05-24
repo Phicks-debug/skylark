@@ -179,7 +179,7 @@ std::vector<SearchResult> search(std::string_view query,
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_callback);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
     curl_easy_setopt(curl, CURLOPT_TIMEOUT, 30L);
-    curl_easy_setopt(curl, CURLOPT_USERAGENT, "Tiny-Habibi/1.0");
+    curl_easy_setopt(curl, CURLOPT_USERAGENT, "tiny-habibi/1.0");
 
     CURLcode res = curl_easy_perform(curl);
 

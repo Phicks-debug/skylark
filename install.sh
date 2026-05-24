@@ -1,18 +1,18 @@
 #!/bin/bash
-# install.sh — Install bb (Tiny-Habibi) on Linux and macOS
+# install.sh — Install bb (tiny-habibi) on Linux and macOS
 # Usage: curl -sSL https://raw.githubusercontent.com/Phicks-debug/tiny-habibi/main/install.sh | bash
 #   or:  bash install.sh --repo Phicks-debug/tiny-habibi
 
 set -e
 
-REPO_URL_BASE=
+REPO="Phicks-debug/tiny-habibi"
 BIN_DIR=${HOME}/.local/bin
 INSTALL_DIR=${BIN_DIR}/bb
 
 while [[ $# -gt 0 ]]; do
   case $1 in
     --repo)
-      REPO_URL_BASE=https://github.com/$2/releases/latest
+      REPO=$2
       shift 2 ;;
     --force)   FORCE=true; shift ;;
     --keep-tmp) KEEP_TMP=true; shift ;;
@@ -23,7 +23,6 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-REPO_URL_BASE=${REPO_URL_BASE:-https://github.com/Phicks-debug/tiny-habibi/releases/latest}
 PLATFORM=$(uname -s | tr '[:upper:]' '[:lower:]')
 ARCH=$(uname -m)
 
@@ -46,14 +45,30 @@ if [[ -f ${INSTALL_DIR} && ${FORCE:-} != true ]]; then
   exit 0
 fi
 
-echo "Installing bb (Tiny-Habibi) (${PLATFORM}-${ARCH})..."
+echo "Installing bb (tiny-habibi) (${PLATFORM}-${ARCH})..."
 check_litert
 mkdir -p ${BIN_DIR}
 TMPDIR=$(mktemp -d)
 TARBALL_PATH=${TMPDIR}/${TARBALL}
 
-echo "Downloading from GitHub Releases..."
-curl -L --retry 3 -o ${TARBALL_PATH} "${REPO_URL_BASE}/download/${TARBALL}"
+echo "Resolving latest release..."
+TAG=$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" 2>/tmp/bb_install_err | grep '"tag_name"' | sed 's/.*"tag_name": *"\([^"]*\)".*/\1/')
+if [ -z "$TAG" ]; then
+  echo "Error: Could not find latest release for ${REPO}"
+  if [ -s /tmp/bb_install_err ]; then
+    echo "  Details:" >&2
+    cat /tmp/bb_install_err >&2
+  fi
+  rm -f /tmp/bb_install_err
+  rm -rf ${TMPDIR}
+  exit 1
+fi
+rm -f /tmp/bb_install_err
+echo "  Found tag: ${TAG}"
+
+DOWNLOAD_URL="https://github.com/${REPO}/releases/download/${TAG}/${TARBALL}"
+echo "Downloading ${TARBALL}..."
+curl -L --retry 3 -o ${TARBALL_PATH} "${DOWNLOAD_URL}"
 
 echo "Extracting..."
 tar -xzf ${TARBALL_PATH} -C ${BIN_DIR}

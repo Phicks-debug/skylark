@@ -33,7 +33,7 @@ export PATH="$HOME/.local/bin:$PATH"
 
 ### Prerequisites for the binary
 
-- **Python 3.11+** with `litert-lm` installed:
+- **Python 3.9+** with `litert-lm` installed:
 
   ```bash
   pip install litert-lm
@@ -83,7 +83,7 @@ Pre-built binaries are available on the [Releases](https://github.com/Phicks-deb
 ## Building from Source
 
 ```bash
-# 1. Install Python dependency
+# 1. Install litert-lm (use the Python where you want it installed)
 pip install litert-lm
 
 # 2. Install system dependencies (build-time only)
@@ -94,7 +94,7 @@ brew install curl portaudio cmake
 # Linux:
 sudo apt install libcurl4-openssl-dev portaudio19-dev pkg-config cmake
 
-# 3. Build
+# 3. Build — uses the Python that has litert-lm installed
 LITERT_LM_DIR=$(python3 -c "import litert_lm, os; print(os.path.dirname(litert_lm.__file__))") \
   cmake -B build -DCMAKE_BUILD_TYPE=Release -DLITERT_LM_DIR="$LITERT_LM_DIR"
 cmake --build build --parallel $(sysctl -n hw.logicalcpu 2>/dev/null || nproc)
@@ -102,6 +102,8 @@ cmake --build build --parallel $(sysctl -n hw.logicalcpu 2>/dev/null || nproc)
 # 4. Run
 ./build/bb --help
 ```
+
+> **Troubleshooting:** If `python3` can't import `litert_lm`, try the specific Python version where it's installed (e.g., `python3.11`, `python3.12`). You can also pass the litert_lm path directly: `cmake -B build -DLITERT_LM_DIR=/path/to/litert_lm`. CMake will auto-detect litert_lm via `pip show litert-lm` as a fallback.
 
 ## Options
 

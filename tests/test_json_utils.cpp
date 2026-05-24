@@ -1,4 +1,4 @@
-// Unit tests for Tiny-Habibi JSON utility functions
+// Unit tests for tiny-habibi JSON utility functions
 // Compile: g++ -std=c++20 -o test_json_utils test_json_utils.cpp
 // Run: ./test_json_utils
 
@@ -558,7 +558,7 @@ void test_build_message_json() {
 // ====================================================================
 
 int main() {
-    std::cout << "\n=== Tiny-Habibi Unit Tests ===\n" << std::endl;
+    std::cout << "\n=== tiny-habibi Unit Tests ===\n" << std::endl;
 
     test_json_escape();
     test_json_get_str();
