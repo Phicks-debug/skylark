@@ -64,6 +64,9 @@ public:
     // Get a single conversation by ID.
     ConversationInfo get_conversation(int64_t conversation_id);
 
+    // Delete a conversation and all its messages (CASCADE).
+    bool delete_conversation(int64_t conversation_id);
+
     // Get the default database path (~/.cache/tiny-habibi/conversations.db).
     static std::string default_path();
 

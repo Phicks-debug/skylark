@@ -1079,7 +1079,7 @@ static void chat_loop(const Config& cfg) {
                 line = line.substr(start, line.find_last_not_of(" \t\n\r") - start + 1);
             if (line == "/exit" || line == "/quit") break;
             if (line == "/help") {
-                cprintln("Voice mode: press ENTER to record. Commands: /exit, /quit, /model, /resume, /clear, /help", Color::Dim);
+                cprintln("Voice mode: press ENTER to record. Commands: /exit, /quit, /model, /resume, /delete, /clear, /help", Color::Dim);
                 continue;
             }
             if (line == "/model") {
@@ -1087,6 +1087,10 @@ static void chat_loop(const Config& cfg) {
                 cprintln("Backend: " + active_backend, Color::BrightWhite);
                 cprintln("Thinking: " + std::string(cfg.no_thinking ? "off" : "on"), Color::BrightWhite);
                 cprintln("Search: " + std::string(cfg.enable_search ? "enabled" : "disabled"), Color::BrightWhite);
+                continue;
+            }
+            if (line == "/delete") {
+                cprintln("⚠️  /delete is only available in text mode. Use text mode to delete conversations.", Color::Yellow);
                 continue;
             }
             if (line == "/resume") {
@@ -1139,7 +1143,7 @@ static void chat_loop(const Config& cfg) {
             // ---- Handle commands ----
             if (line == "/exit" || line == "/quit") break;
             if (line == "/help") {
-                cprintln("Commands: /exit, /quit, /clear, /model, /resume, /help", Color::Dim);
+                cprintln("Commands: /exit, /quit, /clear, /model, /resume, /delete, /help", Color::Dim);
                 continue;
             }
             if (line == "/model") {
@@ -1226,6 +1230,73 @@ static void chat_loop(const Config& cfg) {
                 }
                 current_conv_id = selected.id;
                 conv_title = selected.title;
+                continue;
+            }
+            if (line == "/delete") {
+                if (!db.is_open()) {
+                    cprintln("⚠️  Conversation database not available.", Color::Yellow);
+                    continue;
+                }
+
+                auto conversations = db.list_conversations();
+                if (conversations.empty()) {
+                    cprintln("No saved conversations to delete.", Color::Dim);
+                    continue;
+                }
+
+                cprintln("Saved conversations:", Color::BrightWhite);
+                for (size_t i = 0; i < conversations.size(); i++) {
+                    std::string label = conversations[i].title.empty()
+                        ? "(untitled)"
+                        : conversations[i].title;
+                    if (label.length() > 60) {
+                        label = label.substr(0, 57) + "...";
+                    }
+                    cprintln("  " + std::to_string(i + 1) + ". " + label, Color::BrightWhite);
+                    cprintln("     " + conversations[i].created_at + " | " +
+                             conversations[i].model_path + " | " +
+                             conversations[i].backend, Color::Dim);
+                }
+
+                cprint("Delete conversation (1-" + std::to_string(conversations.size()) +
+                       ") or 0 to cancel: ", Color::BoldGreen);
+                std::cout.flush();
+
+                std::string choice_str;
+                if (!std::getline(std::cin, choice_str)) break;
+                int choice;
+                try { choice = std::stoi(choice_str); }
+                catch (...) { cprintln("Invalid choice.", Color::Yellow); continue; }
+
+                if (choice == 0) {
+                    cprintln("Cancelled.", Color::Dim);
+                    continue;
+                }
+                if (choice < 1 || choice > static_cast<int>(conversations.size())) {
+                    cprintln("Invalid choice.", Color::Yellow);
+                    continue;
+                }
+
+                auto& selected = conversations[static_cast<size_t>(choice - 1)];
+                std::string label = selected.title.empty() ? "(untitled)" : selected.title;
+
+                if (db.delete_conversation(selected.id)) {
+                    cprintln("🗑️  Deleted: " + label, Color::Green);
+                    // If we deleted the current conversation, start a fresh one
+                    if (selected.id == current_conv_id) {
+                        litert_lm_conversation_delete(conversation);
+                        conversation = create_conversation_with_history(engine, cfg, system_prompt, {});
+                        if (!conversation) {
+                            cprintln("❌ Failed to create new conversation.", Color::Red);
+                            break;
+                        }
+                        current_conv_id = db.create_conversation(cfg.model_path, active_backend, "");
+                        conv_title.clear();
+                        cprintln("✅ Started fresh conversation.", Color::Green);
+                    }
+                } else {
+                    cprintln("❌ Failed to delete conversation.", Color::Red);
+                }
                 continue;
             }
         }

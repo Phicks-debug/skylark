@@ -192,6 +192,20 @@ std::vector<MessageInfo> ConversationDB::get_messages(int64_t conversation_id) {
     return result;
 }
 
+bool ConversationDB::delete_conversation(int64_t conversation_id) {
+    if (!db_) return false;
+    sqlite3* db = to_sqlite3(db_);
+
+    const char* sql = "DELETE FROM conversations WHERE id = ?;";
+    sqlite3_stmt* stmt = nullptr;
+    if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) != SQLITE_OK) return false;
+
+    sqlite3_bind_int64(stmt, 1, conversation_id);
+    bool ok = (sqlite3_step(stmt) == SQLITE_DONE);
+    sqlite3_finalize(stmt);
+    return ok;
+}
+
 ConversationInfo ConversationDB::get_conversation(int64_t conversation_id) {
     ConversationInfo info;
     info.id = -1;
