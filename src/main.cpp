@@ -227,6 +227,29 @@ static std::string read_system_prompt(const Config& cfg) {
            "tool results.";
 }
 
+// ---- Unescape JSON string escapes (reverse of json_escape) ----
+static std::string json_unescape(std::string_view str) {
+    std::string out;
+    out.reserve(str.length());
+    for (size_t i = 0; i < str.length(); i++) {
+        if (str[i] == '\\' && i + 1 < str.length()) {
+            switch (str[i + 1]) {
+            case 'n':  out += '\n'; i++; break;
+            case 't':  out += '\t'; i++; break;
+            case 'r':  out += '\r'; i++; break;
+            case '"':  out += '"'; i++; break;
+            case '\\': out += '\\'; i++; break;
+            case 'b':  out += '\b'; i++; break;
+            case 'f':  out += '\f'; i++; break;
+            default:   out += str[i]; break;
+            }
+        } else {
+            out += str[i];
+        }
+    }
+    return out;
+}
+
 // ---- Escape string for JSON ----
 static std::string json_escape(std::string_view str) {
     std::string out;
@@ -530,7 +553,8 @@ struct StreamState {
     bool printed_any = false;
     std::string accumulated;       // accumulate full JSON for tool detection
     std::string active_channel;    // track current channel name
-    markdown::StreamingRenderer md_renderer;  // markdown renderer for text output
+    markdown::StreamingRenderer md_renderer;       // markdown renderer for text output
+    markdown::RenderState channel_md_state;         // markdown state for channel content
 };
 
 // Extract raw JSON array after a key
@@ -603,9 +627,10 @@ static void parse_content_array(std::string_view content_arr, F&& on_text) {
                 auto text_start = text_key + 8;
                 auto text_end = obj.find('"', text_start);
                 if (text_end != std::string::npos) {
-                    std::string text(obj.substr(text_start, text_end - text_start));
-                    if (!text.empty()) {
-                        on_text(text);
+                    std::string raw(obj.substr(text_start, text_end - text_start));
+                    if (!raw.empty()) {
+                        // Unescape JSON string escapes (\n, \", \\, etc.)
+                        on_text(json_unescape(raw));
                     }
                 }
             }
@@ -614,8 +639,8 @@ static void parse_content_array(std::string_view content_arr, F&& on_text) {
         search = obj_end + 1;
     }
 }
-// Channel content (e.g., thinking) is displayed in yellow
-// Text content goes through markdown renderer for rich terminal output
+// Channel content (e.g., thinking) is displayed in yellow with markdown rendering.
+// Text content goes through markdown renderer for rich terminal output.
 static void display_chunk(std::string_view chunk, StreamState& state) {
     if (chunk.empty()) return;
 
@@ -652,9 +677,11 @@ static void display_chunk(std::string_view chunk, StreamState& state) {
             if (vq == std::string::npos) break;
             auto vqe = channels_obj.find('"', vq + 1);
             if (vqe == std::string::npos) break;
-            std::string ch_content(channels_obj.substr(vq + 1, vqe - vq - 1));
+            std::string raw_content(channels_obj.substr(vq + 1, vqe - vq - 1));
 
-            if (!ch_content.empty()) {
+            if (!raw_content.empty()) {
+                // Unescape JSON escapes (\n, \", \\, etc.) to real characters
+                std::string unescaped = json_unescape(raw_content);
                 if (ch_name != state.active_channel) {
                     if (state.printed_any) {
                         // Flush markdown buffer before switching channels
@@ -664,7 +691,11 @@ static void display_chunk(std::string_view chunk, StreamState& state) {
                     }
                     state.active_channel = ch_name;
                 }
-                cprint(ch_content, Color::Yellow);
+                // Render channel content through markdown for inline formatting
+                // (bold, italic, code, etc.) in yellow like display_full_response
+                std::cout << ansi(Color::Yellow)
+                          << markdown::render_line(unescaped, state.channel_md_state)
+                          << ansi(Color::Reset) << '\n';
                 state.printed_any = true;
             }
 
@@ -840,23 +871,8 @@ static void display_full_response(std::string_view json) {
             std::string ch_content(channels_obj.substr(vq + 1, vqe - vq - 1));
 
             if (!ch_content.empty()) {
-                // Unescape JSON \\n, \\t, \\" etc. to real characters for display.
-                std::string unescaped;
-                unescaped.reserve(ch_content.length());
-                for (size_t i = 0; i < ch_content.length(); i++) {
-                    if (ch_content[i] == '\\' && i + 1 < ch_content.length()) {
-                        switch (ch_content[i + 1]) {
-                        case 'n':  unescaped += '\n'; i++; break;
-                        case 't':  unescaped += '\t'; i++; break;
-                        case 'r':  unescaped += '\r'; i++; break;
-                        case '"':  unescaped += '"'; i++; break;
-                        case '\\': unescaped += '\\'; i++; break;
-                        default:   unescaped += ch_content[i]; break;
-                        }
-                    } else {
-                        unescaped += ch_content[i];
-                    }
-                }
+                // Unescape JSON escapes to real characters for display
+                std::string unescaped = json_unescape(ch_content);
                 // Render channel content with markdown (yellow for thinking)
                 std::cout << ansi(Color::Yellow)
                           << markdown::render_line(unescaped, channel_md_state)
@@ -877,7 +893,7 @@ static void display_full_response(std::string_view json) {
     std::string content_arr = json_get_array(json, "content");
     if (!content_arr.empty()) {
         parse_content_array(content_arr, [&](const std::string& text) {
-            // Use streaming renderer to handle multi-line markdown properly
+            // text is already unescaped by parse_content_array
             markdown::StreamingRenderer sr;
             std::cout << sr.feed(text);
             std::cout << sr.flush();
