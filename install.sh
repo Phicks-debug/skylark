@@ -1,13 +1,13 @@
 #!/bin/bash
-# install.sh — Install tiny-skylark on Linux and macOS
-# Usage: curl -sSL https://raw.githubusercontent.com/Phicks-debug/tiny-skylark/main/install.sh | bash
-#   or:  bash install.sh --repo Phicks-debug/tiny-skylark
+# install.sh — Install bb (Tiny-Habibi) on Linux and macOS
+# Usage: curl -sSL https://raw.githubusercontent.com/Phicks-debug/tiny-habibi/main/install.sh | bash
+#   or:  bash install.sh --repo Phicks-debug/tiny-habibi
 
 set -e
 
 REPO_URL_BASE=
 BIN_DIR=${HOME}/.local/bin
-INSTALL_DIR=${BIN_DIR}/tiny-skylark
+INSTALL_DIR=${BIN_DIR}/bb
 
 while [[ $# -gt 0 ]]; do
   case $1 in
@@ -17,21 +17,21 @@ while [[ $# -gt 0 ]]; do
     --force)   FORCE=true; shift ;;
     --keep-tmp) KEEP_TMP=true; shift ;;
     --help)
-      echo -e 'Usage: install.sh [OPTIONS]\n  --repo USER/REPO   GitHub repo (default: Phicks-debug/tiny-skylark)\n  --force           Overwrite existing binary\n  --keep-tmp        Keep downloaded tarball\n  --help            Show this help'
+      echo -e 'Usage: install.sh [OPTIONS]\n  --repo USER/REPO   GitHub repo (default: Phicks-debug/tiny-habibi)\n  --force           Overwrite existing binary\n  --keep-tmp        Keep downloaded tarball\n  --help            Show this help'
       exit 0 ;;
     *) echo "Unknown option: $1"; exit 1 ;;
   esac
 done
 
-REPO_URL_BASE=${REPO_URL_BASE:-https://github.com/Phicks-debug/tiny-skylark/releases/latest}
+REPO_URL_BASE=${REPO_URL_BASE:-https://github.com/Phicks-debug/tiny-habibi/releases/latest}
 PLATFORM=$(uname -s | tr '[:upper:]' '[:lower:]')
 ARCH=$(uname -m)
 
 case "${PLATFORM}-${ARCH}" in
-  linux-x86_64)   TARBALL=tiny-skylark-linux-x64.tar.gz ;;
-  linux-aarch64)  TARBALL=tiny-skylark-linux-arm64.tar.gz ;;
-  darwin-x86_64)  TARBALL=tiny-skylark-darwin-x64.tar.gz ;;
-  darwin-arm64)   TARBALL=tiny-skylark-darwin-arm64.tar.gz ;;
+  linux-x86_64)   TARBALL=tiny-habibi-linux-x64.tar.gz ;;
+  linux-aarch64)  TARBALL=tiny-habibi-linux-arm64.tar.gz ;;
+  darwin-x86_64)  TARBALL=tiny-habibi-darwin-x64.tar.gz ;;
+  darwin-arm64)   TARBALL=tiny-habibi-darwin-arm64.tar.gz ;;
   *) echo "Unsupported: ${PLATFORM}-${ARCH}"; exit 1 ;;
 esac
 
@@ -46,7 +46,7 @@ if [[ -f ${INSTALL_DIR} && ${FORCE:-} != true ]]; then
   exit 0
 fi
 
-echo "Installing tiny-skylark (${PLATFORM}-${ARCH})..."
+echo "Installing bb (Tiny-Habibi) (${PLATFORM}-${ARCH})..."
 check_litert
 mkdir -p ${BIN_DIR}
 TMPDIR=$(mktemp -d)

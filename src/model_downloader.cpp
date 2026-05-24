@@ -73,7 +73,7 @@ bool download_file(std::string_view url,
     curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L);
     curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
     curl_easy_setopt(curl, CURLOPT_TIMEOUT, 600L);
-    curl_easy_setopt(curl, CURLOPT_USERAGENT, "Tiny-Skylark/1.0");
+    curl_easy_setopt(curl, CURLOPT_USERAGENT, "Tiny-Habibi/1.0");
 
     CURLcode res = curl_easy_perform(curl);
     file.close();
@@ -111,9 +111,9 @@ bool is_local_path(std::string_view path) {
 std::string default_cache_dir() {
     const char* home = std::getenv("HOME");
     if (!home) home = std::getenv("USERPROFILE");
-    if (!home) return "./.cache/tiny-skylark";
+    if (!home) return "./.cache/tiny-habibi";
 
-    std::string dir = std::string(home) + "/.cache/tiny-skylark/models";
+    std::string dir = std::string(home) + "/.cache/tiny-habibi/models";
     std::error_code ec;
     fs::create_directories(dir, ec);
     return dir;

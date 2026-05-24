@@ -72,7 +72,7 @@ jobs:
         id: package
         run: |
           mkdir -p dist
-          cp build/tiny-skylark dist/
+          cp build/bb dist/
           ARCH_NAME=$(uname -m)
           if [[ "$ARCH_NAME" == x86_64 ]]; then
             ARCH_SUFFIX=x64
@@ -80,12 +80,12 @@ jobs:
             ARCH_SUFFIX=arm64
           fi
           echo "arch=$ARCH_SUFFIX" >> $GITHUB_OUTPUT
-          tar -czf dist/tiny-skylark-${{ matrix.platform }}-${ARCH_SUFFIX}.tar.gz -C dist tiny-skylark
+          tar -czf dist/tiny-habibi-${{ matrix.platform }}-${ARCH_SUFFIX}.tar.gz -C dist bb
 
       - name: Upload release tarball
         uses: actions/upload-artifact@v4
         with:
-          name: tiny-skylark-${{ matrix.platform }}-${{ steps.package.outputs.arch }}
-          path: dist/tiny-skylark-${{ matrix.platform }}-${{ steps.package.outputs.arch }}.tar.gz
+          name: tiny-habibi-${{ matrix.platform }}-${{ steps.package.outputs.arch }}
+          path: dist/tiny-habibi-${{ matrix.platform }}-${{ steps.package.outputs.arch }}.tar.gz
           retention-days: 30
 

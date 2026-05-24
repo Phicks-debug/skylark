@@ -1,4 +1,4 @@
-// Tiny-Skylark - C++ CLI for running Gemma models with LiteRT-LM
+// Tiny-Habibi - C++ CLI for running Gemma models with LiteRT-LM
 // Features: streaming chat, voice input, image/video input,
 //            Tavily web search, model download, GPU backend
 
@@ -63,7 +63,7 @@ static void sigint_handler(int /*sig*/) {
 
 // ---- Help text ----
 static void print_help(const char* prog) {
-    std::cout << R"(Tiny-Skylark - Interactive CLI for Gemma models via LiteRT-LM
+    std::cout << R"(Tiny-Habibi - Interactive CLI for Gemma models via LiteRT-LM
 
 Usage: )" << prog << R"( [OPTIONS]
 
@@ -71,7 +71,7 @@ Model Options:
   --model PATH           Model path or HuggingFace repo ID (e.g., "google/gemma-3-4b-it")
   --backend BACKEND      Hardware backend: cpu or gpu (default: gpu)
   --cache-dir DIR        Cache directory for downloaded models
-                         (default: ~/.cache/tiny-skylark/models)
+                         (default: ~/.cache/tiny-habibi/models)
   --download             Download model from HuggingFace and exit
 
 Inference Options:
@@ -1059,7 +1059,7 @@ static void chat_loop(const Config& cfg) {
     // ---- Welcome ----
     std::cout << '\n';
     print_separator(Color::Dim);
-    cprintln("Tiny-Skylark - Type your message (Ctrl+C to cancel, Ctrl+D to exit)",
+    cprintln("Tiny-Habibi - Type your message (Ctrl+C to cancel, Ctrl+D to exit)",
             Color::BrightWhite);
     cprintln(std::string("Backend: ") + cfg.backend +
              (cfg.speculative_decoding ? " (speculative)" : "") +
@@ -1071,7 +1071,7 @@ static void chat_loop(const Config& cfg) {
 
     // ---- Chat loop ----
     std::string line;
-    std::string audio_file = "/tmp/tiny-skylark_recording.wav";
+    std::string audio_file = "/tmp/bb_recording.wav";
 
     while (true) {
         // Prompt
