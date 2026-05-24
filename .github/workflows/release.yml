@@ -16,10 +16,10 @@ jobs:
         os: [macos-latest, ubuntu-latest]
         include:
           - os: macos-latest
-            python-version: \"3.11\"
+            python-version: "3.11"
             platform: darwin
           - os: ubuntu-latest
-            python-version: \"3.11\"
+            python-version: "3.11"
             platform: linux
 
     runs-on: ${{ matrix.os }}
@@ -39,14 +39,14 @@ jobs:
       - name: Get litert_lm path
         id: litert-path
         run: |
-          LITERT_PATH=$(python -c \"import litert_lm, os; print(os.path.dirname(litert_lm.__file__))\")
-          echo \"path=$LITERT_PATH\" >> $GITHUB_OUTPUT
+          LITERT_PATH=$(python -c "import litert_lm, os; print(os.path.dirname(litert_lm.__file__))")
+          echo "path=$LITERT_PATH" >> $GITHUB_OUTPUT
 
       - name: Install system deps (Linux)
         if: matrix.platform == 'linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libcurl4-openssl-dev libportaudio2 portaudio-dev pkg-config || \\
+          sudo apt-get install -y libcurl4-openssl-dev libportaudio2 portaudio-dev pkg-config || \
             sudo apt-get install -y libcurl4-openssl-dev libportaudio2 libportaudio-dev pkg-config
 
       - name: Install system deps (macOS)
@@ -56,8 +56,8 @@ jobs:
       - name: Configure CMake
         run: |
           mkdir -p build
-          cmake -B build \\
-            -DCMAKE_BUILD_TYPE=Release \\
+          cmake -B build \
+            -DCMAKE_BUILD_TYPE=Release \
             -DLITERT_LM_DIR=${{ steps.litert-path.outputs.path }}
 
       - name: Build
@@ -68,7 +68,7 @@ jobs:
           mkdir -p dist
           cp build/gemma_cli dist/
           ARCH_NAME=$(uname -m)
-          if [[ \"$ARCH_NAME\" == x86_64 ]]; then
+          if [[ "$ARCH_NAME" == x86_64 ]]; then
             ARCH_SUFFIX=x86_64
           else
             ARCH_SUFFIX=arm64
@@ -82,9 +82,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           if ! gh release view ${{ github.ref_name }} --repo ${{ github.repository }} 2>/dev/null; then
-            gh release create ${{ github.ref_name }} \\
-              --title \"GemmaCLI ${{ github.ref_name }}\" \\
-              --notes \"GemmaCLI ${{ github.ref_name }}\" \\
+            gh release create ${{ github.ref_name }} \
+              --title "GemmaCLI ${{ github.ref_name }}" \
+              --notes "GemmaCLI ${{ github.ref_name }}" \
               --repo ${{ github.repository }}
           fi
 
@@ -93,12 +93,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           ARCH_NAME=$(uname -m)
-          if [[ \"$ARCH_NAME\" == x86_64 ]]; then
+          if [[ "$ARCH_NAME" == x86_64 ]]; then
             ARCH_SUFFIX=x86_64
           else
             ARCH_SUFFIX=arm64
           fi
           PLATFORM_NAME=${{ matrix.platform }}
-          gh release upload ${{ github.ref_name }} \\
-            \"dist/gemma_cli-${PLATFORM_NAME}-${ARCH_SUFFIX}.tar.gz\" \\
+          gh release upload ${{ github.ref_name }} \
+            "dist/gemma_cli-${PLATFORM_NAME}-${ARCH_SUFFIX}.tar.gz" \
             --repo ${{ github.repository }}
