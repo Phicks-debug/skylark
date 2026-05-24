@@ -98,6 +98,7 @@ Input Options:
 Tool Options:
   --search               Enable Tavily web search tool
   --tavily-key KEY       Tavily API key for web search
+                          (falls back to TAVILY_API_KEY env var)
 
 System Options:
   --system-prompt PATH   Path to system prompt file (default: AGENTS.md in CWD)
@@ -115,6 +116,12 @@ Examples:
 // ---- Parse CLI arguments ----
 static Config parse_args(int argc, char* argv[]) {
     Config cfg;
+
+    // Read TAVILY_API_KEY from environment as default (CLI flag overrides)
+    const char* env_key = std::getenv("TAVILY_API_KEY");
+    if (env_key && env_key[0] != '\0') {
+        cfg.tavily_api_key = env_key;
+    }
 
     for (int i = 1; i < argc; i++) {
         std::string arg = argv[i];
