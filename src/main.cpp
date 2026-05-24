@@ -1169,40 +1169,71 @@ static void chat_loop(const Config& cfg) {
     std::string audio_file = "/tmp/bb_recording.wav";
 
     while (true) {
-        // Prompt
-        cprint(">>> ", Color::BoldGreen);
-        std::cout.flush();
-
-        // Consume any stale Ctrl+C flag from idle time (nothing to cancel)
-        if (g_cancellation_requested.exchange(false, std::memory_order_acq_rel)) {
-            std::cout << '\n';
-            cprintln("⚠️  Cancelled.", Color::Yellow);
-            continue;
-        }
-
-        if (!std::getline(std::cin, line)) {
-            break; // Ctrl+D
-        }
-
-        // Trim
-        auto start = line.find_first_not_of(" \t\n\r");
-        auto end = line.find_last_not_of(" \t\n\r");
-        if (start == std::string::npos) continue; // Empty line
-        line = line.substr(start, end - start + 1);
-
-        // Handle special commands
-        if (line == "/exit" || line == "/quit") break;
-        if (line == "/help") {
-            cprintln("Commands: /exit, /quit, /clear, /help", Color::Dim);
-            continue;
-        }
-
-        // Voice recording if enabled
         std::string current_audio;
+
         if (cfg.voice_mode) {
+            // ---- Voice-only mode: no text prompt, just press ENTER to record ----
+            // Press ENTER to start recording, speak, press ENTER to stop.
+            // Type /exit, /quit, or /help for commands (Ctrl+D to exit).
+            std::cout.flush();
+
+            // Consume any stale Ctrl+C flag from idle time
+            if (g_cancellation_requested.exchange(false, std::memory_order_acq_rel)) {
+                std::cout << '\n';
+                cprintln("⚠️  Cancelled.", Color::Yellow);
+                continue;
+            }
+
+            if (!std::getline(std::cin, line)) {
+                break; // Ctrl+D
+            }
+
+            // Trim and check for commands
+            auto start = line.find_first_not_of(" \t\n\r");
+            if (start != std::string::npos) {
+                line = line.substr(start, line.find_last_not_of(" \t\n\r") - start + 1);
+                if (line == "/exit" || line == "/quit") break;
+                if (line == "/help") {
+                    cprintln("Voice mode: press ENTER to record, type /exit to quit", Color::Dim);
+                    continue;
+                }
+            }
+
+            // Start recording (ENTER to stop)
             std::filesystem::remove(audio_file);
-            if (audio_recorder::record_to_file(audio_file, true, 16000, 1, 120)) {
-                current_audio = audio_file;
+            if (!audio_recorder::record_to_file(audio_file, true, 16000, 1, 120)) {
+                continue;  // Recording failed, try again
+            }
+            current_audio = audio_file;
+            line.clear();  // No text in voice mode
+
+        } else {
+            // ---- Text mode ----
+            cprint(">>> ", Color::BoldGreen);
+            std::cout.flush();
+
+            // Consume any stale Ctrl+C flag from idle time (nothing to cancel)
+            if (g_cancellation_requested.exchange(false, std::memory_order_acq_rel)) {
+                std::cout << '\n';
+                cprintln("⚠️  Cancelled.", Color::Yellow);
+                continue;
+            }
+
+            if (!std::getline(std::cin, line)) {
+                break; // Ctrl+D
+            }
+
+            // Trim
+            auto start = line.find_first_not_of(" \t\n\r");
+            auto end = line.find_last_not_of(" \t\n\r");
+            if (start == std::string::npos) continue; // Empty line
+            line = line.substr(start, end - start + 1);
+
+            // Handle special commands
+            if (line == "/exit" || line == "/quit") break;
+            if (line == "/help") {
+                cprintln("Commands: /exit, /quit, /clear, /help", Color::Dim);
+                continue;
             }
         }
 
