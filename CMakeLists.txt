@@ -109,6 +109,18 @@ endif()
 # ============================================================
 # System dependencies (pkg-config or standard paths)
 # ============================================================
+# SQLite3: prefer Homebrew path on macOS, fall back to system
+find_path(SQLITE3_INCLUDE_DIR sqlite3.h
+    PATHS /opt/homebrew/opt/sqlite/include /usr/local/opt/sqlite/include
+          /opt/homebrew/include /usr/local/include /usr/include)
+find_library(SQLITE3_LIBRARY NAMES sqlite3
+    PATHS /opt/homebrew/opt/sqlite/lib /usr/local/opt/sqlite/lib
+          /opt/homebrew/lib /usr/local/lib /usr/lib)
+if(NOT SQLITE3_INCLUDE_DIR OR NOT SQLITE3_LIBRARY)
+    message(FATAL_ERROR "SQLite3 not found. Install with: brew install sqlite")
+endif()
+message(STATUS "Found SQLite3: ${SQLITE3_LIBRARY}")
+
 if(APPLE)
     find_path(CURL_INCLUDE_DIRS curl/curl.h PATHS /opt/homebrew/opt/curl/include /usr/local/opt/curl/include)
     find_library(CURL_LIBRARIES NAMES curl PATHS /opt/homebrew/opt/curl/lib /usr/local/opt/curl/lib)
@@ -141,6 +153,7 @@ set(SOURCES
     src/audio_recorder.cpp
     src/tavily_search.cpp
     src/markdown_renderer.cpp
+    src/conversation_db.cpp
 )
 
 # ============================================================
@@ -165,6 +178,10 @@ target_link_libraries(bb PRIVATE
     "${PORTAUDIO_LIBRARIES}"
     ${FRAMEWORKS}
 )
+
+# SQLite3: link with explicit paths (avoids find_package compatibility issues)
+target_include_directories(bb PRIVATE ${SQLITE3_INCLUDE_DIR})
+target_link_libraries(bb PRIVATE ${SQLITE3_LIBRARY})
 
 # ============================================================
 # RPATH + linker flags (OS-specific)

@@ -88,22 +88,6 @@ bool download_file(std::string_view url,
     return true;
 }
 
-std::string resolve_model_url(std::string_view model_id) {
-    if (is_local_path(model_id)) {
-        return std::string(model_id);
-    }
-
-    // Construct HF download URL
-    // Format: https://huggingface.co/{org}/{model}/resolve/main/{model}.safetensors
-    std::string id(model_id);
-    std::string url = "https://huggingface.co/" + id + "/resolve/main/";
-
-    // Try to find the model file - common patterns
-    // The actual model file name depends on the repo
-    // We return the base URL and let the caller handle file discovery
-    return url;
-}
-
 bool is_local_path(std::string_view path) {
     return fs::exists(path);
 }

@@ -1,6 +1,7 @@
 // Tavily web search implementation using libcurl
 
 #include "tavily_search.hpp"
+#include "json_utils.hpp"
 #include "terminal.hpp"
 #include <curl/curl.h>
 #include <cstring>
@@ -124,20 +125,9 @@ public:
         return results;
     }
 
-    // Escape a string for JSON
+    // Escape a string for JSON (delegates to shared json_utils)
     static std::string escape(std::string_view str) {
-        std::string result;
-        for (char c : str) {
-            switch (c) {
-            case '"': result += "\\\""; break;
-            case '\\': result += "\\\\"; break;
-            case '\n': result += "\\n"; break;
-            case '\r': result += "\\r"; break;
-            case '\t': result += "\\t"; break;
-            default: result += c;
-            }
-        }
-        return result;
+        return json_utils::json_escape(str);
     }
 };
 

@@ -1,6 +1,7 @@
 // tiny-habibi - C++ CLI for running Gemma models with LiteRT-LM
 // Features: streaming chat, voice input, image/video input,
-//            Tavily web search, model download, GPU backend
+//            Tavily web search, model download, GPU backend,
+//            SQLite conversation persistence with /resume
 
 #include "litert_lm_c_api.h"
 #include "terminal.hpp"
@@ -8,6 +9,8 @@
 #include "audio_recorder.hpp"
 #include "tavily_search.hpp"
 #include "markdown_renderer.hpp"
+#include "json_utils.hpp"
+#include "conversation_db.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -94,15 +97,12 @@ Input Options:
 
 Tool Options:
   --search               Enable Tavily web search tool
-  --tavily-key KEY       Tavily API key (or set TAVILY_API_KEY env var)
+  --tavily-key KEY       Tavily API key for web search
 
 System Options:
   --system-prompt PATH   Path to system prompt file (default: AGENTS.md in CWD)
   --debug                Print debug info (model, system prompt, chat template, etc.)
   --help, -h             Show this help message
-
-Environment Variables:
-  TAVILY_API_KEY         Default Tavily API key for web search
 
 Examples:
   )" << prog << R"( --model /path/to/model.safetensors
@@ -115,10 +115,6 @@ Examples:
 // ---- Parse CLI arguments ----
 static Config parse_args(int argc, char* argv[]) {
     Config cfg;
-
-    // Check TAVILY_API_KEY env var
-    const char* env_key = std::getenv("TAVILY_API_KEY");
-    if (env_key) cfg.tavily_api_key = env_key;
 
     for (int i = 1; i < argc; i++) {
         std::string arg = argv[i];
@@ -229,57 +225,6 @@ static std::string read_system_prompt(const Config& cfg) {
            "tool results.";
 }
 
-// ---- Unescape JSON string escapes (reverse of json_escape) ----
-static std::string json_unescape(std::string_view str) {
-    std::string out;
-    out.reserve(str.length());
-    for (size_t i = 0; i < str.length(); i++) {
-        if (str[i] == '\\' && i + 1 < str.length()) {
-            switch (str[i + 1]) {
-            case 'n':  out += '\n'; i++; break;
-            case 't':  out += '\t'; i++; break;
-            case 'r':  out += '\r'; i++; break;
-            case '"':  out += '"'; i++; break;
-            case '\\': out += '\\'; i++; break;
-            case 'b':  out += '\b'; i++; break;
-            case 'f':  out += '\f'; i++; break;
-            default:   out += str[i]; break;
-            }
-        } else {
-            out += str[i];
-        }
-    }
-    return out;
-}
-
-// ---- Escape string for JSON ----
-static std::string json_escape(std::string_view str) {
-    std::string out;
-    // Reserve headroom to avoid repeated reallocations.
-    out.reserve(str.length() * 2);
-    for (char c : str) {
-        switch (c) {
-        case '"':  out += "\\\""; break;
-        case '\\': out += "\\\\"; break;
-        case '\n': out += "\\n"; break;
-        case '\r': out += "\\r"; break;
-        case '\t': out += "\\t"; break;
-        case '\b': out += "\\b"; break;
-        case '\f': out += "\\f"; break;
-        default:
-            if (static_cast<unsigned char>(c) < 0x20) {
-                // Control character: escape as \u00XX
-                out += "\\u00";
-                out += "0123456789abcdef"[(c >> 4) & 0xf];
-                out += "0123456789abcdef"[c & 0xf];
-            } else {
-                out += c;
-            }
-        }
-    }
-    return out;
-}
-
 // ---- Resolve model path from a directory (HF cache or similar) ----
 static std::string resolve_model_path(const std::string& path) {
     // If it's a regular file, use it directly
@@ -350,7 +295,7 @@ static std::string build_message_json(std::string_view text,
     // Text part
     if (!text.empty()) {
         json << "{\"type\":\"text\",\"text\":\""
-             << json_escape(text) << "\"}";
+             << json_utils::json_escape(text) << "\"}";
         first = false;
     }
 
@@ -358,7 +303,7 @@ static std::string build_message_json(std::string_view text,
     if (!image_path.empty()) {
         if (!first) json << ",";
         json << "{\"type\":\"image\",\"path\":\""
-             << json_escape(image_path) << "\"}";
+             << json_utils::json_escape(image_path) << "\"}";
         first = false;
     }
 
@@ -366,88 +311,13 @@ static std::string build_message_json(std::string_view text,
     if (!audio_path.empty()) {
         if (!first) json << ",";
         json << "{\"type\":\"audio\",\"path\":\""
-             << json_escape(audio_path) << "\"}";
+             << json_utils::json_escape(audio_path) << "\"}";
         first = false;
     }
 
     json << "]}";
 
     return json.str();
-}
-
-// ---- Extract a JSON-quoted string (handles \" and \\ escapes) ----
-// `start` must point to the opening ". Returns raw content (with escapes preserved)
-// and sets `end_pos` to position after the closing ".
-static std::string json_extract_raw_string(std::string_view json, size_t start, size_t& end_pos) {
-    if (start >= json.length() || json[start] != '"') {
-        end_pos = start;
-        return "";
-    }
-    std::string raw;
-    size_t i = start + 1;
-    while (i < json.length()) {
-        if (json[i] == '\\' && i + 1 < json.length()) {
-            raw += json[i];
-            raw += json[i + 1];
-            i += 2;
-        } else if (json[i] == '"') {
-            end_pos = i + 1;
-            return raw;
-        } else {
-            raw += json[i];
-            i++;
-        }
-    }
-    end_pos = i;
-    return raw;
-}
-
-// ---- Minimal JSON string extractor ----
-static std::string json_get_str(std::string_view json, std::string_view key) {
-    std::string search = std::string("\"") + std::string(key) + "\"";
-    auto pos = json.find(search);
-    if (pos == std::string_view::npos) return "";
-    auto colon = json.find(':', pos + search.length());
-    if (colon == std::string_view::npos) return "";
-    auto open = json.find('"', colon + 1);
-    if (open == std::string_view::npos) return "";
-    auto close = json.find('"', open + 1);
-    if (close == std::string_view::npos) return "";
-    return std::string(json.substr(open + 1, close - open - 1));
-}
-
-// ---- Extract raw JSON object after a key (for nested objects) ----
-static std::string json_get_object(std::string_view json, std::string_view key) {
-    std::string search = std::string("\"") + std::string(key) + "\"";
-    auto pos = json.find(search);
-    if (pos == std::string_view::npos) return "";
-    auto colon = json.find(':', pos + search.length());
-    if (colon == std::string_view::npos) return "";
-
-    // Skip whitespace after colon
-    size_t start = colon + 1;
-    while (start < json.length() && (json[start] == ' ' || json[start] == '\t' || json[start] == '\n'))
-        start++;
-
-    if (start >= json.length() || json[start] != '{') return "";
-
-    // Find matching close brace
-    int depth = 0;
-    for (size_t i = start; i < json.length(); i++) {
-        if (json[i] == '{') depth++;
-        else if (json[i] == '}') {
-            depth--;
-            if (depth == 0) return std::string(json.substr(start, i - start + 1));
-        }
-        if (json[i] == '"') {
-            i++;
-            while (i < json.length() && json[i] != '"') {
-                if (json[i] == '\\') i++;
-                i++;
-            }
-        }
-    }
-    return "";
 }
 
 // ---- Extract tool call info from response JSON ----
@@ -511,8 +381,8 @@ static std::vector<ToolCall> extract_tool_calls(std::string_view json) {
                 if (fd == 0) {
                     std::string_view func = obj.substr(func_obj, func_end - func_obj + 1);
                     ToolCall tc;
-                    tc.name = json_get_str(func, "name");
-                    tc.arguments_json = json_get_object(func, "arguments");
+                    tc.name = json_utils::json_get_str(func, "name");
+                    tc.arguments_json = json_utils::json_get_object(func, "arguments");
                     if (!tc.name.empty()) calls.push_back(std::move(tc));
                 }
             }
@@ -535,9 +405,9 @@ static std::string execute_tool_calls(const std::vector<ToolCall>& calls,
 
         if (calls[i].name == "web_search") {
             // Parse query from arguments JSON
-            std::string query = json_get_str(calls[i].arguments_json, "query");
+            std::string query = json_utils::json_get_str(calls[i].arguments_json, "query");
             if (query.empty()) {
-                query = json_get_str(calls[i].arguments_json, "q");
+                query = json_utils::json_get_str(calls[i].arguments_json, "q");
             }
 
             if (!query.empty() && !api_key.empty()) {
@@ -561,8 +431,8 @@ static std::string execute_tool_calls(const std::vector<ToolCall>& calls,
             // Unknown tool — send error
             responses << "{\"role\":\"tool\",\"content\":["
                      << "{\"type\":\"tool_response\","
-                     << "\"name\":\"" << json_escape(calls[i].name) << "\","
-                     << "\"response\":\"Error: Unknown tool \\\"" << json_escape(calls[i].name) << "\\\"\""
+                     << "\"name\":\"" << json_utils::json_escape(calls[i].name) << "\","
+                     << "\"response\":\"Error: Unknown tool \\\"" << json_utils::json_escape(calls[i].name) << "\\\"\""
                      << "}]}";
         }
     }
@@ -584,38 +454,6 @@ struct StreamState {
     std::string accumulated;       // accumulate full JSON for tool detection
     markdown::StreamingRenderer md_renderer;       // markdown renderer for text output
 };
-
-// Extract raw JSON array after a key
-static std::string json_get_array(std::string_view json, std::string_view key) {
-    std::string search = std::string("\"") + std::string(key) + "\"";
-    auto pos = json.find(search);
-    if (pos == std::string_view::npos) return "";
-    auto colon = json.find(':', pos + search.length());
-    if (colon == std::string_view::npos) return "";
-
-    size_t start = colon + 1;
-    while (start < json.length() && (json[start] == ' ' || json[start] == '\t' || json[start] == '\n'))
-        start++;
-
-    if (start >= json.length() || json[start] != '[') return "";
-
-    int depth = 0;
-    for (size_t i = start; i < json.length(); i++) {
-        if (json[i] == '[') depth++;
-        else if (json[i] == ']') {
-            depth--;
-            if (depth == 0) return std::string(json.substr(start, i - start + 1));
-        }
-        if (json[i] == '"') {
-            i++;
-            while (i < json.length() && json[i] != '"') {
-                if (json[i] == '\\') i++;
-                i++;
-            }
-        }
-    }
-    return "";
-}
 
 // ---- Shared: parse a JSON array (already extracted) for text content ----
 // Calls `on_text(str)` for each text segment found.
@@ -658,7 +496,7 @@ static void parse_content_array(std::string_view content_arr, F&& on_text) {
                     std::string raw(obj.substr(text_start, text_end - text_start));
                     if (!raw.empty()) {
                         // Unescape JSON string escapes (\n, \", \\, etc.)
-                        on_text(json_unescape(raw));
+                        on_text(json_utils::json_unescape(raw));
                     }
                 }
             }
@@ -667,6 +505,22 @@ static void parse_content_array(std::string_view content_arr, F&& on_text) {
         search = obj_end + 1;
     }
 }
+
+// ---- Extract all text from a JSON response (for saving to DB) ----
+static std::string extract_response_text(std::string_view json) {
+    std::ostringstream out;
+    std::string content_arr = json_utils::json_get_array(json, "content");
+    if (!content_arr.empty()) {
+        bool first = true;
+        parse_content_array(content_arr, [&](const std::string& text) {
+            if (!first) out << ' ';
+            out << text;
+            first = false;
+        });
+    }
+    return out.str();
+}
+
 // Channel content (e.g., thinking) streams raw characters immediately in gray.
 // Text content streams raw characters immediately for token-by-token feel (like Ollama).
 static void display_chunk(std::string_view chunk, StreamState& state) {
@@ -689,17 +543,15 @@ static void display_chunk(std::string_view chunk, StreamState& state) {
 
     // Parse channels: {"channels":{"channel_name":"content",...}}
     // Uses proper JSON string extraction that handles \" escapes.
-    std::string channels_obj = json_get_object(chunk, "channels");
+    std::string channels_obj = json_utils::json_get_object(chunk, "channels");
     if (!channels_obj.empty()) {
         size_t pos = 1;  // skip opening {
         while (pos < channels_obj.length()) {
-            // Extract channel name (quoted string)
+            // Extract channel name (quoted string) — needed to advance past it
             size_t kq = channels_obj.find('"', pos);
             if (kq == std::string::npos) break;
             size_t kqe;
-            std::string ch_name = json_extract_raw_string(channels_obj, kq, kqe);
-            // Unescape channel name (JSON key)
-            ch_name = json_unescape(ch_name);
+            json_utils::json_extract_raw_string(channels_obj, kq, kqe);  // skip key
 
             auto colon = channels_obj.find(':', kqe);
             if (colon == std::string::npos) break;
@@ -708,10 +560,10 @@ static void display_chunk(std::string_view chunk, StreamState& state) {
             size_t vq = channels_obj.find('"', colon + 1);
             if (vq == std::string::npos) break;
             size_t vqe;
-            std::string raw_content = json_extract_raw_string(channels_obj, vq, vqe);
+            std::string raw_content = json_utils::json_extract_raw_string(channels_obj, vq, vqe);
 
             if (!raw_content.empty()) {
-                std::string unescaped = json_unescape(raw_content);
+                std::string unescaped = json_utils::json_unescape(raw_content);
                 // Stream channel content immediately in gray, no markdown/line-buffering
                 if (!state.channel_active) {
                     if (state.printed_any) {
@@ -745,7 +597,7 @@ static void display_chunk(std::string_view chunk, StreamState& state) {
     }
 
     // Parse text from content array: {"content":[{"type":"text","text":"..."}]}
-    std::string content_arr = json_get_array(chunk, "content");
+    std::string content_arr = json_utils::json_get_array(chunk, "content");
     if (!content_arr.empty()) {
         parse_content_array(content_arr, [&](const std::string& text) {
             if (state.channel_active) {
@@ -821,7 +673,6 @@ static bool download_model(const Config& cfg) {
     cprintln("📥 Downloading model from HuggingFace: " + cfg.model_path, Color::Cyan);
 
     // Construct download URL
-    // HuggingFace API: https://huggingface.co/{model_id}/resolve/main/
     std::string base_url = "https://huggingface.co/" + cfg.model_path + "/resolve/main/";
 
     // List of common model file names to try
@@ -846,8 +697,6 @@ static bool download_model(const Config& cfg) {
 
         cprintln("Trying: " + url, Color::Dim);
 
-        // Also need tokenizer and config
-        // For now, just try to download the model file
         auto progress_fn = [](size_t downloaded, size_t total) {
             if (total > 0) {
                 int pct = static_cast<int>(100.0 * downloaded / total);
@@ -860,7 +709,6 @@ static bool download_model(const Config& cfg) {
         if (model_downloader::download_file(url, output, progress_fn)) {
             std::cout << '\n';
             cprintln("✅ Downloaded: " + output, Color::Green);
-            // Update model path to the downloaded file
             return true;
         }
     }
@@ -872,20 +720,19 @@ static bool download_model(const Config& cfg) {
 
 // Display a complete (non-streaming) JSON response with channel/text parsing
 // Text content goes through markdown renderer for rich terminal output.
-// Uses direct stdout (no cprint wrapping) so markdown ANSI codes are preserved.
 static void display_full_response(std::string_view json) {
     if (json.empty()) return;
 
     // Parse channels: {"channels":{"channel_name":"content",...}}
-    std::string channels_obj = json_get_object(json, "channels");
+    std::string channels_obj = json_utils::json_get_object(json, "channels");
     if (!channels_obj.empty()) {
         size_t pos = 1;  // skip opening {
         while (pos < channels_obj.length()) {
-            // Extract channel name (quoted string)
+            // Extract channel name (quoted string) — needed to advance past it
             size_t kq = channels_obj.find('"', pos);
             if (kq == std::string::npos) break;
             size_t kqe;
-            std::string ch_name = json_extract_raw_string(channels_obj, kq, kqe);
+            json_utils::json_extract_raw_string(channels_obj, kq, kqe);  // skip key
 
             auto colon = channels_obj.find(':', kqe);
             if (colon == std::string::npos) break;
@@ -894,10 +741,10 @@ static void display_full_response(std::string_view json) {
             size_t vq = channels_obj.find('"', colon + 1);
             if (vq == std::string::npos) break;
             size_t vqe;
-            std::string ch_content = json_extract_raw_string(channels_obj, vq, vqe);
+            std::string ch_content = json_utils::json_extract_raw_string(channels_obj, vq, vqe);
 
             if (!ch_content.empty()) {
-                std::string unescaped = json_unescape(ch_content);
+                std::string unescaped = json_utils::json_unescape(ch_content);
                 // Output channel content as raw gray text, no markdown rendering
                 std::cout << ansi(Color::BrightBlack)
                           << unescaped
@@ -915,7 +762,7 @@ static void display_full_response(std::string_view json) {
     }
 
     // Parse text from content array: {"content":[{"type":"text","text":"..."}]}
-    std::string content_arr = json_get_array(json, "content");
+    std::string content_arr = json_utils::json_get_array(json, "content");
     if (!content_arr.empty()) {
         parse_content_array(content_arr, [&](const std::string& text) {
             // text is already unescaped by parse_content_array
@@ -1020,14 +867,74 @@ static void print_debug_info(const Config& cfg,
     std::cout << "\n";
 }
 
+// ---- Helper: create a new conversation with DB history loaded ----
+static LiteRtLmConversation* create_conversation_with_history(
+    LiteRtLmEngine* engine,
+    const Config& cfg,
+    const std::string& system_prompt,
+    const std::vector<conversation_db::MessageInfo>& history) {
+
+    LiteRtLmSessionConfig* session_cfg = litert_lm_session_config_create();
+    litert_lm_session_config_set_max_output_tokens(session_cfg, cfg.max_output_tokens);
+    litert_lm_session_config_set_apply_prompt_template(session_cfg, true);
+
+    LiteRtLmSamplerParams sampler = {
+        kLiteRtLmSamplerTypeTopP,
+        cfg.top_k,
+        cfg.top_p,
+        cfg.temperature,
+        cfg.seed,
+    };
+    litert_lm_session_config_set_sampler_params(session_cfg, &sampler);
+
+    LiteRtLmConversationConfig* conv_cfg = litert_lm_conversation_config_create();
+    litert_lm_conversation_config_set_session_config(conv_cfg, session_cfg);
+    litert_lm_session_config_delete(session_cfg);
+
+    // Set system prompt
+    std::string sys_json = "{\"role\":\"system\",\"content\":[{\"type\":\"text\",\"text\":\""
+                          + json_utils::json_escape(system_prompt) + "\"}]}";
+    litert_lm_conversation_config_set_system_message(conv_cfg, sys_json.c_str());
+
+    // Enable thinking mode
+    if (!cfg.no_thinking) {
+        litert_lm_conversation_config_set_extra_context(conv_cfg,
+            "{\"enable_thinking\": true}");
+    }
+
+    // Set tools if search enabled
+    if (cfg.enable_search) {
+        std::string tools = tavily_search::get_tool_definition();
+        litert_lm_conversation_config_set_tools(conv_cfg, tools.c_str());
+    }
+
+    // Set history messages if any
+    if (!history.empty()) {
+        std::ostringstream msgs_json;
+        msgs_json << "[";
+        for (size_t i = 0; i < history.size(); i++) {
+            if (i > 0) msgs_json << ",";
+            msgs_json << "{\"role\":\"" << history[i].role << "\","
+                      << "\"content\":[{\"type\":\"text\",\"text\":\""
+                      << json_utils::json_escape(history[i].content)
+                      << "\"}]}";
+        }
+        msgs_json << "]";
+        litert_lm_conversation_config_set_messages(conv_cfg, msgs_json.str().c_str());
+    }
+
+    LiteRtLmConversation* conversation = litert_lm_conversation_create(engine, conv_cfg);
+    litert_lm_conversation_config_delete(conv_cfg);
+
+    return conversation;
+}
+
 // ---- Chat loop ----
 static void chat_loop(const Config& cfg) {
     // Suppress verbose LiteRT-LM logging
     litert_lm_set_min_log_level(3); // WARNING level
 
     // ---- Create engine settings ----
-    // Vision/audio backends default to "cpu" if not explicitly set,
-    // since multimodal models often require CPU for encoders.
     const char* vision_be = cfg.vision_backend.empty() ? "cpu"
                                                        : cfg.vision_backend.c_str();
     const char* audio_be = cfg.audio_backend.empty() ? "cpu"
@@ -1056,7 +963,6 @@ static void chat_loop(const Config& cfg) {
     }
 
     // ---- Create engine ----
-    // Try requested backend first; fall back to CPU if GPU is unavailable
     cprint("Loading model", Color::Cyan);
     cprint("...", Color::Dim);
     std::cout.flush();
@@ -1098,52 +1004,32 @@ static void chat_loop(const Config& cfg) {
     std::cout << '\n';
     cprintln("✅ Model loaded successfully!", Color::Green);
 
-    // ---- Create session config ----
-    LiteRtLmSessionConfig* session_cfg = litert_lm_session_config_create();
-    litert_lm_session_config_set_max_output_tokens(session_cfg, cfg.max_output_tokens);
-    // Enable the Jinja chat template from model metadata (Gemma 4 uses it)
-    litert_lm_session_config_set_apply_prompt_template(session_cfg, true);
-
-    LiteRtLmSamplerParams sampler = {
-        kLiteRtLmSamplerTypeTopP,
-        cfg.top_k,
-        cfg.top_p,
-        cfg.temperature,
-        cfg.seed,
-    };
-    litert_lm_session_config_set_sampler_params(session_cfg, &sampler);
-
-    // ---- Create conversation config ----
-    LiteRtLmConversationConfig* conv_cfg = litert_lm_conversation_config_create();
-    litert_lm_conversation_config_set_session_config(conv_cfg, session_cfg);
-    litert_lm_session_config_delete(session_cfg);
-
-    // Set system prompt
+    // ---- Read system prompt ----
     std::string system_prompt = read_system_prompt(cfg);
-    std::string sys_json = "{\"role\":\"system\",\"content\":[{\"type\":\"text\",\"text\":\""
-                          + json_escape(system_prompt) + "\"}]}";
-    litert_lm_conversation_config_set_system_message(conv_cfg, sys_json.c_str());
 
-    // Enable thinking mode (Gemma 4 E2B supports reasoning/thinking channels)
-    if (!cfg.no_thinking) {
-        litert_lm_conversation_config_set_extra_context(conv_cfg,
-            "{\"enable_thinking\": true}");
-    }
-
-    // Set tools if search enabled
-    if (cfg.enable_search) {
-        std::string tools = tavily_search::get_tool_definition();
-        litert_lm_conversation_config_set_tools(conv_cfg, tools.c_str());
-    }
-
-    // ---- Create conversation ----
-    LiteRtLmConversation* conversation = litert_lm_conversation_create(engine, conv_cfg);
-    litert_lm_conversation_config_delete(conv_cfg);
-
+    // ---- Create initial conversation ----
+    LiteRtLmConversation* conversation = create_conversation_with_history(
+        engine, cfg, system_prompt, {});
     if (!conversation) {
         cprintln("❌ Failed to create conversation.", Color::Red);
         litert_lm_engine_delete(engine);
         return;
+    }    // ---- Open conversation database (ensure parent dirs exist first) ----
+    std::string db_path = conversation_db::ConversationDB::default_path();
+    {
+        std::error_code ec;
+        fs::create_directories(fs::path(db_path).parent_path(), ec);
+    }
+    conversation_db::ConversationDB db(db_path);
+    if (!db.is_open() || !db.init()) {
+        if (cfg.debug) cprintln("⚠️  Failed to open conversation database (non-fatal)", Color::Dim);
+    }
+
+    // Start a new conversation in DB
+    std::string conv_title;
+    int64_t current_conv_id = -1;
+    if (db.is_open()) {
+        current_conv_id = db.create_conversation(cfg.model_path, active_backend, "");
     }
 
     // ---- Debug info ----
@@ -1151,8 +1037,7 @@ static void chat_loop(const Config& cfg) {
         print_debug_info(cfg, cfg.model_path, system_prompt);
     }
 
-    // Register signal handler (async-signal-safe: only sets atomic flag;
-    // actual cancellation/cout happens in the main loop below)
+    // Register signal handler
     std::signal(SIGINT, sigint_handler);
 
     // Suppress noisy library stderr after model load unless debugging
@@ -1172,56 +1057,73 @@ static void chat_loop(const Config& cfg) {
         std::string current_audio;
 
         if (cfg.voice_mode) {
-            // ---- Voice-only mode: no text prompt, just press ENTER to record ----
-            // Press ENTER to start recording, speak, press ENTER to stop.
-            // Type /exit, /quit, or /help for commands (Ctrl+D to exit).
+            // ---- Voice-only mode ----
             std::cout.flush();
 
-            // Consume any stale Ctrl+C flag from idle time
             if (g_cancellation_requested.exchange(false, std::memory_order_acq_rel)) {
                 std::cout << '\n';
                 cprintln("⚠️  Cancelled.", Color::Yellow);
                 continue;
             }
 
-            if (!std::getline(std::cin, line)) {
-                break; // Ctrl+D
-            }
+            if (!std::getline(std::cin, line)) break; // Ctrl+D
 
             // Trim and check for commands
             auto start = line.find_first_not_of(" \t\n\r");
             if (start != std::string::npos) {
                 line = line.substr(start, line.find_last_not_of(" \t\n\r") - start + 1);
-                if (line == "/exit" || line == "/quit") break;
-                if (line == "/help") {
-                    cprintln("Voice mode: press ENTER to record, type /exit to quit", Color::Dim);
-                    continue;
+            if (line == "/exit" || line == "/quit") break;
+            if (line == "/help") {
+                cprintln("Voice mode: press ENTER to record. Commands: /exit, /quit, /model, /resume, /clear, /help", Color::Dim);
+                continue;
+            }
+            if (line == "/model") {
+                cprintln("Model: " + cfg.model_path, Color::BrightWhite);
+                cprintln("Backend: " + active_backend, Color::BrightWhite);
+                cprintln("Thinking: " + std::string(cfg.no_thinking ? "off" : "on"), Color::BrightWhite);
+                cprintln("Search: " + std::string(cfg.enable_search ? "enabled" : "disabled"), Color::BrightWhite);
+                continue;
+            }
+            if (line == "/resume") {
+                cprintln("⚠️  /resume is only available in text mode. Use text mode to resume conversations.", Color::Yellow);
+                continue;
+            }
+            if (line == "/clear") {
+                litert_lm_conversation_delete(conversation);
+                conversation = create_conversation_with_history(engine, cfg, system_prompt, {});
+                if (!conversation) {
+                    cprintln("❌ Failed to create new conversation.", Color::Red);
+                    break;
                 }
+                if (db.is_open()) {
+                    current_conv_id = db.create_conversation(cfg.model_path, active_backend, "");
+                    conv_title.clear();
+                }
+                cprintln("✅ Conversation cleared.", Color::Green);
+                continue;
+            }
             }
 
-            // Start recording (ENTER to stop)
+            // Start recording
             std::filesystem::remove(audio_file);
             if (!audio_recorder::record_to_file(audio_file, true, 16000, 1, 120)) {
-                continue;  // Recording failed, try again
+                continue;
             }
             current_audio = audio_file;
-            line.clear();  // No text in voice mode
+            line.clear();
 
         } else {
             // ---- Text mode ----
             cprint(">>> ", Color::BoldGreen);
             std::cout.flush();
 
-            // Consume any stale Ctrl+C flag from idle time (nothing to cancel)
             if (g_cancellation_requested.exchange(false, std::memory_order_acq_rel)) {
                 std::cout << '\n';
                 cprintln("⚠️  Cancelled.", Color::Yellow);
                 continue;
             }
 
-            if (!std::getline(std::cin, line)) {
-                break; // Ctrl+D
-            }
+            if (!std::getline(std::cin, line)) break; // Ctrl+D
 
             // Trim
             auto start = line.find_first_not_of(" \t\n\r");
@@ -1229,22 +1131,119 @@ static void chat_loop(const Config& cfg) {
             if (start == std::string::npos) continue; // Empty line
             line = line.substr(start, end - start + 1);
 
-            // Handle special commands
+            // ---- Handle commands ----
             if (line == "/exit" || line == "/quit") break;
             if (line == "/help") {
-                cprintln("Commands: /exit, /quit, /clear, /help", Color::Dim);
+                cprintln("Commands: /exit, /quit, /clear, /model, /resume, /help", Color::Dim);
+                continue;
+            }
+            if (line == "/model") {
+                cprintln("Model: " + cfg.model_path, Color::BrightWhite);
+                cprintln("Backend: " + active_backend, Color::BrightWhite);
+                cprintln("Thinking: " + std::string(cfg.no_thinking ? "off" : "on"), Color::BrightWhite);
+                cprintln("Search: " + std::string(cfg.enable_search ? "enabled" : "disabled"), Color::BrightWhite);
+                continue;
+            }
+            if (line == "/clear") {
+                // Reset conversation: delete old, create fresh
+                litert_lm_conversation_delete(conversation);
+                conversation = create_conversation_with_history(engine, cfg, system_prompt, {});
+                if (!conversation) {
+                    cprintln("❌ Failed to create new conversation.", Color::Red);
+                    break;
+                }
+                // Start a new conversation in DB
+                if (db.is_open()) {
+                    current_conv_id = db.create_conversation(cfg.model_path, active_backend, "");
+                    conv_title.clear();
+                }
+                cprintln("✅ Conversation cleared.", Color::Green);
+                continue;
+            }
+            if (line == "/resume") {
+                if (!db.is_open()) {
+                    cprintln("⚠️  Conversation database not available.", Color::Yellow);
+                    continue;
+                }
+
+                auto conversations = db.list_conversations();
+                if (conversations.empty()) {
+                    cprintln("No saved conversations found.", Color::Dim);
+                    continue;
+                }
+
+                cprintln("Saved conversations:", Color::BrightWhite);
+                for (size_t i = 0; i < conversations.size(); i++) {
+                    std::string label = conversations[i].title.empty()
+                        ? "(untitled)"
+                        : conversations[i].title;
+                    if (label.length() > 60) {
+                        label = label.substr(0, 57) + "...";
+                    }
+                    cprintln("  " + std::to_string(i + 1) + ". " + label, Color::BrightWhite);
+                    cprintln("     " + conversations[i].created_at + " | " +
+                             conversations[i].model_path + " | " +
+                             conversations[i].backend, Color::Dim);
+                }
+
+                cprint("Select conversation (1-" + std::to_string(conversations.size()) +
+                       ") or 0 to cancel: ", Color::BoldGreen);
+                std::cout.flush();
+
+                std::string choice_str;
+                if (!std::getline(std::cin, choice_str)) break;
+                int choice;
+                try { choice = std::stoi(choice_str); }
+                catch (...) { cprintln("Invalid choice.", Color::Yellow); continue; }
+
+                if (choice == 0) {
+                    cprintln("Cancelled.", Color::Dim);
+                    continue;
+                }
+                if (choice < 1 || choice > static_cast<int>(conversations.size())) {
+                    cprintln("Invalid choice.", Color::Yellow);
+                    continue;
+                }
+
+                auto& selected = conversations[static_cast<size_t>(choice - 1)];
+                auto history = db.get_messages(selected.id);
+
+                cprintln("Resuming conversation: " +
+                         (selected.title.empty() ? "(untitled)" : selected.title),
+                         Color::Cyan);
+
+                // Rebuild conversation with history
+                litert_lm_conversation_delete(conversation);
+                conversation = create_conversation_with_history(engine, cfg, system_prompt, history);
+                if (!conversation) {
+                    cprintln("❌ Failed to resume conversation.", Color::Red);
+                    break;
+                }
+                current_conv_id = selected.id;
+                conv_title = selected.title;
                 continue;
             }
         }
 
-        // Handle image/video attachment (first turn only, or set via CLI arg)
+        // Handle image/video attachment
         std::string current_image;
         if (!cfg.image_path.empty()) {
             current_image = cfg.image_path;
         }
 
-        // Build message
+        // Build message and save user input to DB
         std::string msg_json = build_message_json(line, current_image, current_audio);
+        std::string user_text = line.empty() ? "[voice message]" : line;
+
+        if (db.is_open() && current_conv_id >= 0) {
+            bool ok = db.save_message(current_conv_id, "user", user_text);
+            if (!ok && cfg.debug) cprintln("⚠️  Failed to save user message to DB", Color::Dim);
+            // Update title from first user message
+            if (conv_title.empty() && !line.empty()) {
+                conv_title = line.length() > 80 ? line.substr(0, 77) + "..." : line;
+                db.update_title(current_conv_id, conv_title);
+            }
+        }
 
         if (cfg.no_stream) {
             // ---- Non-streaming with automatic tool calling ----
@@ -1275,18 +1274,22 @@ static void chat_loop(const Config& cfg) {
                 // Check for tool calls
                 auto tool_calls = extract_tool_calls(resp_str);
                 if (!tool_calls.empty() && cfg.enable_search) {
-                    // Execute tool calls and send response back
                     std::string tool_responses =
                         execute_tool_calls(tool_calls, cfg.tavily_api_key);
                     litert_lm_json_response_delete(response);
-
-                    // C API accepts JSON array of messages directly
                     current_msg = tool_responses;
-                    continue;  // Loop to get model's final response
+                    continue;
                 }
 
-                // No tool calls — print the response with channel/text formatting
+                // No tool calls — print and save
                 display_full_response(resp_str);
+                if (db.is_open() && current_conv_id >= 0) {
+                    std::string response_text = extract_response_text(resp_str);
+                    if (!response_text.empty()) {
+                        bool ok = db.save_message(current_conv_id, "assistant", response_text);
+                        if (!ok && cfg.debug) cprintln("⚠️  Failed to save assistant message to DB", Color::Dim);
+                    }
+                }
                 litert_lm_json_response_delete(response);
                 break;
             }
@@ -1309,8 +1312,7 @@ static void chat_loop(const Config& cfg) {
                     break;
                 }
 
-                // Wait for the background callback to finish (non-blocking API).
-                // Poll in 100ms increments so Ctrl+C cancellation is detected promptly.
+                // Wait for the background callback to finish
                 {
                     std::unique_lock<std::mutex> lock(state.mtx);
                     constexpr auto poll_interval = std::chrono::milliseconds(100);
@@ -1320,20 +1322,18 @@ static void chat_loop(const Config& cfg) {
                     while (!state.done && !cancelled) {
                         if (state.cv.wait_for(lock, poll_interval,
                                               [&state] { return state.done; })) {
-                            break;  // done
+                            break;
                         }
-                        // Check ctrl+c flag (set by async-signal-safe sigint_handler)
                         if (g_cancellation_requested.exchange(false,
                                                               std::memory_order_acq_rel)) {
                             cancelled = true;
                         }
                         if (std::chrono::steady_clock::now() >= deadline) {
-                            break;  // full timeout
+                            break;
                         }
                     }
                     if (cancelled) {
-                        lock.unlock();  // release before cancel_process (avoids deadlock
-                                        // if dylib calls callback synchronously)
+                        lock.unlock();
                         cprintln("⚠️  Generation cancelled.", Color::Yellow);
                         litert_lm_conversation_cancel_process(conversation);
                         lock.lock();
@@ -1356,17 +1356,26 @@ static void chat_loop(const Config& cfg) {
                     std::cout.flush();
                 }
 
-                // After streaming, check accumulated response for tool calls
+                // Check for tool calls
                 if (cfg.enable_search && !state.accumulated.empty()) {
                     auto tool_calls = extract_tool_calls(state.accumulated);
                     if (!tool_calls.empty()) {
                         std::string tool_responses =
                             execute_tool_calls(tool_calls, cfg.tavily_api_key);
                         current_msg = tool_responses;
-                        continue;  // Loop to get model's response to tool results
+                        continue;
                     }
                 }
-                break;  // No tool calls, done
+
+                // Save assistant response to DB
+                if (db.is_open() && current_conv_id >= 0 && !state.accumulated.empty()) {
+                    std::string response_text = extract_response_text(state.accumulated);
+                    if (!response_text.empty()) {
+                        bool ok = db.save_message(current_conv_id, "assistant", response_text);
+                        if (!ok && cfg.debug) cprintln("⚠️  Failed to save assistant message to DB", Color::Dim);
+                    }
+                }
+                break;
             }
         }
 
@@ -1374,12 +1383,10 @@ static void chat_loop(const Config& cfg) {
     }
 
     // ---- Cleanup ----
-    // Restore default SIGINT handler
     std::signal(SIGINT, SIG_DFL);
     litert_lm_conversation_delete(conversation);
     litert_lm_engine_delete(engine);
 
-    // Clean up temp audio file
     std::error_code ec;
     std::filesystem::remove(audio_file, ec);
 
@@ -1428,39 +1435,32 @@ int main(int argc, char* argv[]) {
         }
         cfg.model_path = resolved;
     } else if (fs::is_directory(cfg.model_path)) {
-        // Directory exists but no .litertlm or .safetensors file found
         cprintln("❌ No model file (.litertlm or .safetensors) found in: " + cfg.model_path, Color::Red);
         cprintln("   Try passing the path to the .litertlm file directly.", Color::Dim);
         return 1;
     } else if (!fs::exists(cfg.model_path)) {
-        // Path doesn't exist at all - try cache
         std::string cache = cfg.cache_dir.empty()
             ? model_downloader::default_cache_dir()
             : cfg.cache_dir;
         std::string cached = cache + "/" + cfg.model_path;
         std::replace(cached.begin(), cached.end(), '/', '_');
 
-        // Also check HF cache for the default model
         std::string hf_cache = std::string(std::getenv("HOME") ? std::getenv("HOME") : ".") +
                                "/.cache/huggingface/hub/models--litert-community--gemma-4-E2B-it-litert-lm";
 
-        // Try to resolve from cache directory
         std::string cached_resolved = resolve_model_path(cached);
         if (!cached_resolved.empty()) {
             cfg.model_path = cached_resolved;
             cprintln("📂 Using cached model: " + cached_resolved, Color::Dim);
         } else {
-            // Try HF cache
             std::string hf_resolved = resolve_model_path(hf_cache);
             if (!hf_resolved.empty()) {
                 cfg.model_path = hf_resolved;
                 cprintln("📂 Found model in HuggingFace cache: " + hf_resolved, Color::Dim);
             } else {
-                // Auto-download: use Python litert-lm CLI to pull the model
                 cprintln("📥 Model not found locally. Auto-downloading from HuggingFace...", Color::Cyan);
                 cprintln("   (this may take a few minutes — press Ctrl+C to cancel)", Color::Dim);
 
-                // Try python3 first, then python as fallback
                 const char* python_cmd = nullptr;
                 for (auto* candidate : {"python3", "python"}) {
                     std::string check = std::string(candidate) + " -c \"import litert_lm\" 2>/dev/null";
@@ -1469,7 +1469,7 @@ int main(int argc, char* argv[]) {
                         break;
                     }
                 }
-                if (!python_cmd) python_cmd = "python3";  // fallback
+                if (!python_cmd) python_cmd = "python3";
 
                 std::string dl_cmd = std::string(python_cmd) +
                     " -m litert_lm run --from-huggingface-repo=litert-community/gemma-4-E2B-it-litert-lm gemma-4-E2B-it 2>&1";
@@ -1482,13 +1482,11 @@ int main(int argc, char* argv[]) {
                     return 1;
                 }
 
-                // Check HF cache again after download attempt
                 hf_resolved = resolve_model_path(hf_cache);
                 if (!hf_resolved.empty()) {
                     cfg.model_path = hf_resolved;
                     cprintln("✅ Model downloaded: " + hf_resolved, Color::Green);
                 } else {
-                    // Also check litert_lm's own cache
                     std::string litert_cache = std::string(std::getenv("HOME") ? std::getenv("HOME") : ".") +
                                                "/.cache/litert_lm/models--litert-community--gemma-4-E2B-it-litert-lm";
                     std::string litert_resolved = resolve_model_path(litert_cache);
