@@ -66,6 +66,15 @@ jobs:
         run: |
           mkdir -p dist
           cp build/bb dist/
+          # Bundle litert-lm library alongside the binary
+          if [[ "${{ matrix.platform }}" == darwin ]]; then
+            cp "${{ steps.litert-path.outputs.path }}/liblitert-lm.dylib" dist/
+            ln -sf liblitert-lm.dylib dist/liblitert-lm.so
+            TARBALL_FILES="bb liblitert-lm.dylib liblitert-lm.so"
+          else
+            cp "${{ steps.litert-path.outputs.path }}/liblitert-lm.so" dist/
+            TARBALL_FILES="bb liblitert-lm.so"
+          fi
           ARCH_NAME=$(uname -m)
           if [[ "$ARCH_NAME" == x86_64 ]]; then
             ARCH_SUFFIX=x64
@@ -73,7 +82,7 @@ jobs:
             ARCH_SUFFIX=arm64
           fi
           PLATFORM_NAME=${{ matrix.platform }}
-          tar -czf dist/tiny-habibi-${PLATFORM_NAME}-${ARCH_SUFFIX}.tar.gz -C dist bb
+          tar -czf dist/tiny-habibi-${PLATFORM_NAME}-${ARCH_SUFFIX}.tar.gz -C dist ${TARBALL_FILES}
 
       - name: Create or update Release
         env:

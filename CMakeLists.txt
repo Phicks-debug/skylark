@@ -155,8 +155,12 @@ target_include_directories(bb PRIVATE
     src/
 )
 
+# Use -L flag instead of target_link_directories to prevent CMake
+# from automatically adding the litert_lm directory to the RPATH.
+# The library is bundled alongside the binary at build time.
+target_link_options(bb PRIVATE "-L${LITERT_LM_DIR}")
 target_link_libraries(bb PRIVATE
-    "${LITERT_LM_LIB}"
+    litert-lm
     "${CURL_LIBRARIES}"
     "${PORTAUDIO_LIBRARIES}"
     ${FRAMEWORKS}
@@ -164,21 +168,45 @@ target_link_libraries(bb PRIVATE
 
 # ============================================================
 # RPATH + linker flags (OS-specific)
+#
+# The litert-lm library is bundled alongside the binary so the
+# pre-built release tarball works without requiring litert-lm
+# to be at the exact same path as the CI machine.
 # ============================================================
 if(APPLE)
     get_filename_component(CURL_LIB_DIR "${CURL_LIBRARIES}" DIRECTORY)
     get_filename_component(PORTAUDIO_LIB_DIR "${PORTAUDIO_LIBRARIES}" DIRECTORY)
     target_link_options(bb PRIVATE
-        -Wl,-rpath,"${LITERT_LM_DIR}"
+        -Wl,-rpath,@executable_path
         -Wl,-rpath,"${CURL_LIB_DIR}"
         -Wl,-rpath,"${PORTAUDIO_LIB_DIR}"
     )
+
+    # Bundle liblitert-lm.dylib next to the binary so it's self-contained.
+    # Also create a .so symlink — the dylib's install_name is @rpath/liblitert-lm.so.
+    add_custom_command(TARGET bb POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${LITERT_LM_DIR}/liblitert-lm.dylib"
+            "$<TARGET_FILE_DIR:bb>/liblitert-lm.dylib"
+        COMMAND ${CMAKE_COMMAND} -E create_symlink
+            "liblitert-lm.dylib"
+            "$<TARGET_FILE_DIR:bb>/liblitert-lm.so"
+        COMMENT "Bundling liblitert-lm.dylib next to bb"
+    )
 else()
     target_link_options(bb PRIVATE
-        -Wl,-rpath,"${LITERT_LM_DIR}"
+        -Wl,-rpath,'$ORIGIN'
         -Wl,--disable-new-dtags
     )
     target_compile_definitions(bb PRIVATE _GNU_SOURCE)
+
+    # Bundle liblitert-lm.so next to the binary
+    add_custom_command(TARGET bb POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${LITERT_LM_DIR}/liblitert-lm.so"
+            "$<TARGET_FILE_DIR:bb>/liblitert-lm.so"
+        COMMENT "Bundling liblitert-lm.so next to bb"
+    )
 endif()
 
 # ============================================================
