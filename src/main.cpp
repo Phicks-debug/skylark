@@ -16,6 +16,7 @@
 #include <csignal>
 #include <cstdlib>
 #include <cstring>
+#include <fcntl.h>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -23,6 +24,7 @@
 #include <sstream>
 #include <string>
 #include <thread>
+#include <unistd.h>
 #include <vector>
 
 namespace fs = std::filesystem;
@@ -647,14 +649,14 @@ static void flush_channel_buffer(StreamState& state) {
         size_t nl;
         while ((nl = state.channel_buffer.find('\n')) != std::string::npos) {
             std::string line = state.channel_buffer.substr(0, nl);
-            std::cout << ansi(Color::Yellow)
+            std::cout << ansi(Color::BrightBlack)
                       << markdown::render_line(line, state.channel_md_state)
                       << ansi(Color::Reset) << '\n';
             state.channel_buffer.erase(0, nl + 1);
         }
         // Render any remaining partial line
         if (!state.channel_buffer.empty()) {
-            std::cout << ansi(Color::Yellow)
+            std::cout << ansi(Color::BrightBlack)
                       << markdown::render_line(state.channel_buffer, state.channel_md_state)
                       << ansi(Color::Reset) << '\n';
             state.channel_buffer.clear();
@@ -719,7 +721,7 @@ static void display_chunk(std::string_view chunk, StreamState& state) {
                 size_t nl;
                 while ((nl = state.channel_buffer.find('\n')) != std::string::npos) {
                     std::string line = state.channel_buffer.substr(0, nl);
-                    std::cout << ansi(Color::Yellow)
+                    std::cout << ansi(Color::BrightBlack)
                               << markdown::render_line(line, state.channel_md_state)
                               << ansi(Color::Reset) << '\n';
                     state.channel_buffer.erase(0, nl + 1);
@@ -911,7 +913,7 @@ static void display_full_response(std::string_view json) {
                 // Unescape JSON escapes to real characters for display
                 std::string unescaped = json_unescape(ch_content);
                 // Render channel content with markdown (yellow for thinking)
-                std::cout << ansi(Color::Yellow)
+                std::cout << ansi(Color::BrightBlack)
                           << markdown::render_line(unescaped, channel_md_state)
                           << ansi(Color::Reset) << '\n';
             }
@@ -1068,17 +1070,43 @@ static void chat_loop(const Config& cfg) {
     }
 
     // ---- Create engine ----
+    // Try requested backend first; fall back to CPU if GPU is unavailable
     cprint("Loading model", Color::Cyan);
     cprint("...", Color::Dim);
     std::cout.flush();
 
+    std::string active_backend = cfg.backend;
     LiteRtLmEngine* engine = litert_lm_engine_create(engine_settings);
     litert_lm_engine_settings_delete(engine_settings);
 
     if (!engine) {
-        std::cout << '\n';
-        cprintln("❌ Failed to create engine. Check model path and backend.", Color::Red);
-        return;
+        // If GPU backend failed, silently retry with CPU
+        if (active_backend != "cpu") {
+            std::cout << '\n';
+            cprintln("⚠️  GPU unavailable, falling back to CPU", Color::Dim);
+            active_backend = "cpu";
+            engine_settings = litert_lm_engine_settings_create(
+                cfg.model_path.c_str(), "cpu", vision_be, audio_be);
+            if (cfg.max_num_tokens > 0) {
+                litert_lm_engine_settings_set_max_num_tokens(engine_settings, cfg.max_num_tokens);
+            }
+            if (!cfg.cache_dir.empty()) {
+                litert_lm_engine_settings_set_cache_dir(engine_settings, cfg.cache_dir.c_str());
+            }
+            if (cfg.speculative_decoding) {
+                litert_lm_engine_settings_set_enable_speculative_decoding(engine_settings, true);
+            }
+            cprint("Loading model", Color::Cyan);
+            cprint("...", Color::Dim);
+            std::cout.flush();
+            engine = litert_lm_engine_create(engine_settings);
+            litert_lm_engine_settings_delete(engine_settings);
+        }
+        if (!engine) {
+            std::cout << '\n';
+            cprintln("❌ Failed to create engine. Check model path and backend.", Color::Red);
+            return;
+        }
     }
 
     std::cout << '\n';
@@ -1141,18 +1169,14 @@ static void chat_loop(const Config& cfg) {
     // actual cancellation/cout happens in the main loop below)
     std::signal(SIGINT, sigint_handler);
 
-    // ---- Welcome ----
-    std::cout << '\n';
-    print_separator(Color::Dim);
-    cprintln("tiny-habibi - Type your message (Ctrl+C to cancel, Ctrl+D to exit)",
-            Color::BrightWhite);
-    cprintln(std::string("Backend: ") + cfg.backend +
-             (cfg.speculative_decoding ? " (speculative)" : "") +
-             (cfg.enable_search ? " (search)" : "") +
-             (cfg.voice_mode ? " (voice)" : ""),
-             Color::Dim);
-    print_separator(Color::Dim);
-    std::cout << '\n';
+    // Suppress noisy library stderr after model load unless debugging
+    if (!cfg.debug) {
+        int devnull = open("/dev/null", O_WRONLY);
+        if (devnull != -1) {
+            dup2(devnull, STDERR_FILENO);
+            close(devnull);
+        }
+    }
 
     // ---- Chat loop ----
     std::string line;
