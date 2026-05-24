@@ -97,8 +97,7 @@ Input Options:
 
 Tool Options:
   --search               Enable Tavily web search tool
-  --tavily-key KEY       Tavily API key for web search
-                          (falls back to TAVILY_API_KEY env var)
+                         (requires TAVILY_API_KEY environment variable)
 
 System Options:
   --system-prompt PATH   Path to system prompt file (default: AGENTS.md in CWD)
@@ -162,7 +161,6 @@ static Config parse_args(int argc, char* argv[]) {
         else if (arg == "--image")                cfg.image_path = next();
         else if (arg == "--video")                cfg.video_path = next();
         else if (arg == "--search")               cfg.enable_search = true;
-        else if (arg == "--tavily-key")           cfg.tavily_api_key = next();
         else if (arg == "--download")             cfg.download_only = true;
         else if (arg == "--system-prompt")        cfg.system_prompt_path = next();
         else if (arg == "--no-thinking")          cfg.no_thinking = true;
