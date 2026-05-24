@@ -7,6 +7,7 @@
 #include "model_downloader.hpp"
 #include "audio_recorder.hpp"
 #include "tavily_search.hpp"
+#include "markdown_renderer.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -529,6 +530,7 @@ struct StreamState {
     bool printed_any = false;
     std::string accumulated;       // accumulate full JSON for tool detection
     std::string active_channel;    // track current channel name
+    markdown::StreamingRenderer md_renderer;  // markdown renderer for text output
 };
 
 // Extract raw JSON array after a key
@@ -613,18 +615,23 @@ static void parse_content_array(std::string_view content_arr, F&& on_text) {
     }
 }
 // Channel content (e.g., thinking) is displayed in yellow
-// Text content is displayed in green
+// Text content goes through markdown renderer for rich terminal output
 static void display_chunk(std::string_view chunk, StreamState& state) {
     if (chunk.empty()) return;
 
-    // Non-JSON chunks: print as plain green text (fallback)
+    // Non-JSON chunks: print via markdown renderer (fallback)
     if (chunk[0] != '{' && chunk[0] != '[') {
         if (!state.active_channel.empty()) {
+            state.md_renderer.flush();
             std::cout << '\n';
             state.active_channel.clear();
         }
-        cprint(chunk, Color::Green);
-        state.printed_any = true;
+        std::string formatted = state.md_renderer.feed(chunk);
+        if (!formatted.empty()) {
+            std::cout << formatted;
+            std::cout.flush();
+            state.printed_any = true;
+        }
         return;
     }
 
@@ -649,7 +656,12 @@ static void display_chunk(std::string_view chunk, StreamState& state) {
 
             if (!ch_content.empty()) {
                 if (ch_name != state.active_channel) {
-                    if (state.printed_any) std::cout << '\n';
+                    if (state.printed_any) {
+                        // Flush markdown buffer before switching channels
+                        std::string leftover = state.md_renderer.flush();
+                        if (!leftover.empty()) std::cout << leftover;
+                        std::cout << '\n';
+                    }
                     state.active_channel = ch_name;
                 }
                 cprint(ch_content, Color::Yellow);
@@ -663,6 +675,8 @@ static void display_chunk(std::string_view chunk, StreamState& state) {
     // Show tool call indicator if chunk contains tool_calls
     if (chunk.find("\"tool_calls\"") != std::string_view::npos) {
         if (!state.active_channel.empty()) {
+            std::string leftover = state.md_renderer.flush();
+            if (!leftover.empty()) std::cout << leftover;
             std::cout << '\n';
             state.active_channel.clear();
         }
@@ -676,11 +690,17 @@ static void display_chunk(std::string_view chunk, StreamState& state) {
     if (!content_arr.empty()) {
         parse_content_array(content_arr, [&](const std::string& text) {
             if (!state.active_channel.empty()) {
+                std::string leftover = state.md_renderer.flush();
+                if (!leftover.empty()) std::cout << leftover;
                 std::cout << '\n';
                 state.active_channel.clear();
             }
-            cprint(text, Color::Green);
-            state.printed_any = true;
+            std::string formatted = state.md_renderer.feed(text);
+            if (!formatted.empty()) {
+                std::cout << formatted;
+                std::cout.flush();
+                state.printed_any = true;
+            }
         });
     }
 }
@@ -714,6 +734,9 @@ static void stream_callback(void* data,
 
     if (is_final) {
         if (state->printed_any) {
+            // Flush any remaining markdown buffer
+            std::string leftover = state->md_renderer.flush();
+            if (!leftover.empty()) std::cout << leftover;
             // Close active channel if any
             if (!state->active_channel.empty()) {
                 state->active_channel.clear();
@@ -790,8 +813,13 @@ static bool download_model(const Config& cfg) {
 }
 
 // Display a complete (non-streaming) JSON response with channel/text parsing
+// Text content goes through markdown renderer for rich terminal output.
+// Uses direct stdout (no cprint wrapping) so markdown ANSI codes are preserved.
 static void display_full_response(std::string_view json) {
     if (json.empty()) return;
+
+    markdown::RenderState channel_md_state;
+    markdown::RenderState text_md_state;
 
     // Parse channels: {"channels":{"channel_name":"content",...}}
     std::string channels_obj = json_get_object(json, "channels");
@@ -813,7 +841,6 @@ static void display_full_response(std::string_view json) {
 
             if (!ch_content.empty()) {
                 // Unescape JSON \\n, \\t, \\" etc. to real characters for display.
-                // Build a new string rather than modifying in-place (avoid index shifting bugs).
                 std::string unescaped;
                 unescaped.reserve(ch_content.length());
                 for (size_t i = 0; i < ch_content.length(); i++) {
@@ -830,8 +857,10 @@ static void display_full_response(std::string_view json) {
                         unescaped += ch_content[i];
                     }
                 }
-                cprint(unescaped, Color::Yellow);
-                std::cout << '\n';
+                // Render channel content with markdown (yellow for thinking)
+                std::cout << ansi(Color::Yellow)
+                          << markdown::render_line(unescaped, channel_md_state)
+                          << ansi(Color::Reset) << '\n';
             }
 
             pos = vqe + 1;
@@ -848,7 +877,10 @@ static void display_full_response(std::string_view json) {
     std::string content_arr = json_get_array(json, "content");
     if (!content_arr.empty()) {
         parse_content_array(content_arr, [&](const std::string& text) {
-            cprint(text, Color::Green);
+            // Use streaming renderer to handle multi-line markdown properly
+            markdown::StreamingRenderer sr;
+            std::cout << sr.feed(text);
+            std::cout << sr.flush();
         });
         std::cout << '\n';
     }
@@ -1265,11 +1297,10 @@ static void chat_loop(const Config& cfg) {
 int main(int argc, char* argv[]) {
     Config cfg = parse_args(argc, argv);
 
-    // Validate
+    // Default model: Gemma 4 E2B via LiteRT-LM community repo
     if (cfg.model_path.empty()) {
-        std::cerr << "Error: --model is required.\n";
-        std::cerr << "Try '" << argv[0] << " --help' for usage.\n";
-        return 1;
+        cfg.model_path = "litert-community/gemma-4-E2B-it-litert-lm";
+        cprintln("📦 No model specified, defaulting to: " + cfg.model_path, Color::Dim);
     }
 
     // Validate numeric parameters
@@ -1315,15 +1346,69 @@ int main(int argc, char* argv[]) {
         std::string cached = cache + "/" + cfg.model_path;
         std::replace(cached.begin(), cached.end(), '/', '_');
 
+        // Also check HF cache for the default model
+        std::string hf_cache = std::string(std::getenv("HOME") ? std::getenv("HOME") : ".") +
+                               "/.cache/huggingface/hub/models--litert-community--gemma-4-E2B-it-litert-lm";
+
         // Try to resolve from cache directory
         std::string cached_resolved = resolve_model_path(cached);
         if (!cached_resolved.empty()) {
             cfg.model_path = cached_resolved;
             cprintln("📂 Using cached model: " + cached_resolved, Color::Dim);
         } else {
-            cprintln("⚠️  Model not found locally. Use --download to download first.",
-                    Color::Yellow);
-            return 1;
+            // Try HF cache
+            std::string hf_resolved = resolve_model_path(hf_cache);
+            if (!hf_resolved.empty()) {
+                cfg.model_path = hf_resolved;
+                cprintln("📂 Found model in HuggingFace cache: " + hf_resolved, Color::Dim);
+            } else {
+                // Auto-download: use Python litert-lm CLI to pull the model
+                cprintln("📥 Model not found locally. Auto-downloading from HuggingFace...", Color::Cyan);
+                cprintln("   (this may take a few minutes — press Ctrl+C to cancel)", Color::Dim);
+
+                // Try python3 first, then python as fallback
+                const char* python_cmd = nullptr;
+                for (auto* candidate : {"python3", "python"}) {
+                    std::string check = std::string(candidate) + " -c \"import litert_lm\" 2>/dev/null";
+                    if (std::system(check.c_str()) == 0) {
+                        python_cmd = candidate;
+                        break;
+                    }
+                }
+                if (!python_cmd) python_cmd = "python3";  // fallback
+
+                std::string dl_cmd = std::string(python_cmd) +
+                    " -m litert_lm run --from-huggingface-repo=litert-community/gemma-4-E2B-it-litert-lm gemma-4-E2B-it 2>&1";
+                int dl_result = std::system(dl_cmd.c_str());
+                if (dl_result != 0) {
+                    cprintln("❌ Auto-download failed. Try manually:\n"
+                            "   pip install litert-lm huggingface_hub\n"
+                            "   python3 -m litert_lm run --from-huggingface-repo=litert-community/gemma-4-E2B-it-litert-lm gemma-4-E2B-it",
+                            Color::Red);
+                    return 1;
+                }
+
+                // Check HF cache again after download attempt
+                hf_resolved = resolve_model_path(hf_cache);
+                if (!hf_resolved.empty()) {
+                    cfg.model_path = hf_resolved;
+                    cprintln("✅ Model downloaded: " + hf_resolved, Color::Green);
+                } else {
+                    // Also check litert_lm's own cache
+                    std::string litert_cache = std::string(std::getenv("HOME") ? std::getenv("HOME") : ".") +
+                                               "/.cache/litert_lm/models--litert-community--gemma-4-E2B-it-litert-lm";
+                    std::string litert_resolved = resolve_model_path(litert_cache);
+                    if (!litert_resolved.empty()) {
+                        cfg.model_path = litert_resolved;
+                        cprintln("✅ Model downloaded: " + litert_resolved, Color::Green);
+                    } else {
+                        cprintln("❌ Auto-download failed. Try manually:\n"
+                                "   python3 -m litert_lm run --from-huggingface-repo=litert-community/gemma-4-E2B-it-litert-lm gemma-4-E2B-it",
+                                Color::Red);
+                        return 1;
+                    }
+                }
+            }
         }
     }
 

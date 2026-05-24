@@ -53,7 +53,6 @@ TMPDIR=$(mktemp -d)
 TARBALL_PATH=${TMPDIR}/${TARBALL}
 
 echo "Downloading from GitHub Releases..."
-# GitHub Releases store assets at: /releases/download/<tag>/<filename>
 curl -L --retry 3 -o ${TARBALL_PATH} "${REPO_URL_BASE}/download/${TARBALL}"
 
 echo "Extracting..."
@@ -63,9 +62,6 @@ rm -rf ${TMPDIR}
 if [[ -f ${INSTALL_DIR} ]]; then
   echo -e "\n✓ Installed to ${INSTALL_DIR}"
   echo "  Add to PATH: export PATH=\"${BIN_DIR}:\$PATH\""
-  if [[ ${PLATFORM} == linux ]]; then
-    echo -e "\nNote: Also run: sudo apt install libportaudio2"
-  fi
 else
   echo "Error: install failed"
   exit 1

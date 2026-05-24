@@ -1,10 +1,23 @@
-# tiny-habibi
+# Tiny-Habibi
 
-A fast, terminal CLI running agent locally via [LiteRT-LM](https://github.com/google-ai-edge/LiteRT-LM), with Metal GPU acceleration on macOS and Linux edge devices.
+A fast, feature-rich CLI for running Gemma language models locally via [LiteRT-LM](https://github.com/google-ai-edge/LiteRT-LM), with Metal GPU acceleration on macOS.
+
+**Command:** `bb`
+
+## Features
+
+- **Streaming chat** with token-by-token output and **Markdown rendering** in terminal
+- **Auto-download** — no `--model` needed; defaults to Gemma 4 E2B and auto-downloads from HuggingFace
+- **Thinking/reasoning mode** — Gemma 4 E2B model reasoning displayed in yellow
+- **Voice input** — record audio and send to the model
+- **Image & video input** — attach images/video frames to messages
+- **Web search** — Tavily-powered search tool integration
+- **Model download** — pull models directly from HuggingFace
+- **GPU backend** — Metal on macOS, OpenCL/Vulkan on Linux
 
 ## Installation
 
-One-line install:
+One-line install (no build required — downloads a pre-built binary):
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Phicks-debug/tiny-habibi/main/install.sh | bash
 ```
@@ -19,55 +32,73 @@ The binary installs to `~/.local/bin/bb`. Add it to your PATH:
 export PATH="$HOME/.local/bin:$PATH"
 ```
 
-### Prerequisites
+### Prerequisites for the binary
 
 - **Python 3.11+** with `litert-lm` installed:
   ```bash
   pip install litert-lm
   ```
-- **macOS:** Xcode Command Line Tools (`xcode-select --install`)
-- **Linux:** `sudo apt install libcurl4-openssl-dev portaudio19-dev libportaudio2`
+- That's it! **No system packages needed** — the binary is self-contained.
+
+> **Note:** `portaudio` / `libportaudio2` / `libcurl` are **only** needed when **building from source**. The pre-built binary links everything statically or bundles it.
 
 ## Quick Start
 
 ```bash
-# Basic chat with a model
+# Just run — auto-downloads Gemma 4 E2B model on first use
+bb
+
+# Use a specific model
 bb --model ~/.cache/huggingface/hub/models--litert-community--gemma-4-E2B-it-litert-lm
 
-# Download a model from HuggingFace
+# Download a different model from HuggingFace
 bb --model google/gemma-3-4b-it --download
 
 # Chat with web search enabled
-bb --model /path/to/model.litertlm --search --tavily-key YOUR_KEY
+bb --search --tavily-key YOUR_KEY
 
 # Voice input mode
-bb --model /path/to/model --voice
+bb --voice
 
 # Debug mode (shows model info, system prompt, thinking channels)
-bb --model /path/to/model --debug
+bb --debug
 
 # Attach an image
-bb --model /path/to/model --image photo.jpg
+bb --image photo.jpg
 ```
+
+## Platform Support
+
+| Platform | Architecture | Pre-built Binary | Build from Source |
+|---|---|---|---|
+| **macOS** | Apple Silicon (arm64) | ✅ `tiny-habibi-darwin-arm64.tar.gz` | ✅ |
+| **macOS** | Intel (x86_64) | ❌ (build from source) | ✅ |
+| **Linux** | x86_64 | ✅ `tiny-habibi-linux-x64.tar.gz` | ✅ |
+| **Linux** | aarch64 (ARM) | ❌ (build from source) | ✅ |
+| **Windows** | x86_64 | ❌ (build from source) | Planned |
+
+Pre-built binaries are available on the [Releases](https://github.com/Phicks-debug/tiny-habibi/releases) page.
 
 ## Building from Source
 
 ```bash
-# Install deps
+# 1. Install Python dependency
 pip install litert-lm
 
-# macOS
-brew install curl portaudio
+# 2. Install system dependencies (build-time only)
 
-# Linux
-sudo apt install libcurl4-openssl-dev portaudio19-dev pkg-config
+# macOS:
+brew install curl portaudio cmake
 
-# Build
+# Linux:
+sudo apt install libcurl4-openssl-dev portaudio19-dev pkg-config cmake
+
+# 3. Build
 LITERT_LM_DIR=$(python3 -c "import litert_lm, os; print(os.path.dirname(litert_lm.__file__))") \
   cmake -B build -DCMAKE_BUILD_TYPE=Release -DLITERT_LM_DIR="$LITERT_LM_DIR"
 cmake --build build --parallel $(sysctl -n hw.logicalcpu 2>/dev/null || nproc)
 
-# Run
+# 4. Run
 ./build/bb --help
 ```
 
@@ -75,7 +106,7 @@ cmake --build build --parallel $(sysctl -n hw.logicalcpu 2>/dev/null || nproc)
 
 | Option | Description |
 |---|---|
-| `--model PATH` | Model path or HuggingFace repo ID |
+| `--model PATH` | Model path or HuggingFace repo ID (default: `litert-community/gemma-4-E2B-it-litert-lm`) |
 | `--backend BACKEND` | Hardware backend: `cpu` or `gpu` (default: `gpu`) |
 | `--voice, -v` | Enable voice input mode |
 | `--image PATH` | Attach image to first message |
@@ -90,13 +121,6 @@ cmake --build build --parallel $(sysctl -n hw.logicalcpu 2>/dev/null || nproc)
 | `--max-tokens N` | Maximum output tokens (default: 4096) |
 | `--top-p P` | Top-P sampling (default: 0.95) |
 | `--temperature T` | Sampling temperature (default: 1.0) |
-
-## Download
-
-Pre-built binaries are available on the [Releases](https://github.com/Phicks-debug/tiny-habibi/releases) page:
-
-- `tiny-habibi-darwin-arm64.tar.gz` — macOS Apple Silicon
-- `tiny-habibi-linux-x64.tar.gz` — Linux x86_64
 
 ## License
 

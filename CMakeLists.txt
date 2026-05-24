@@ -97,6 +97,7 @@ set(SOURCES
     src/model_downloader.cpp
     src/audio_recorder.cpp
     src/tavily_search.cpp
+    src/markdown_renderer.cpp
 )
 
 # ============================================================
