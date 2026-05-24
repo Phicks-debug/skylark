@@ -1,16 +1,6 @@
-# Tiny-Habibi
+# tiny-habibi
 
-A fast, feature-rich CLI for running Gemma language models locally via [LiteRT-LM](https://github.com/google-ai-edge/LiteRT-LM), with Metal GPU acceleration on macOS.
-
-## Features
-
-- **Streaming chat** with token-by-token output
-- **Thinking/reasoning mode** — Gemma 4 E2B model reasoning displayed in yellow
-- **Voice input** — record audio and send to the model (PortAudio)
-- **Image & video input** — attach images/video frames to messages
-- **Web search** — Tavily-powered search tool integration
-- **Model download** — pull models directly from HuggingFace
-- **GPU backend** — Metal on macOS, OpenCL/Vulkan on Linux
+A fast, terminal CLI running agent locally via [LiteRT-LM](https://github.com/google-ai-edge/LiteRT-LM), with Metal GPU acceleration on macOS and Linux edge devices.
 
 ## Installation
 
