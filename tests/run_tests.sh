@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Skylark Test Suite — Comprehensive integration & unit tests
+# Tiny-Skylark Test Suite — Comprehensive integration & unit tests
 set -uo pipefail
 
-BINARY="${SKYLARK_BINARY:-./build/skylark}"
+BINARY="${TINY_SKYLARK_BINARY:-./build/tiny-skylark}"
 PASS=0
 FAIL=0
 
@@ -270,7 +270,7 @@ echo ""
 echo "━━━ Code Quality ━━━"
 
 # No unused variable warnings (check recent build)
-if [ -f build/CMakeFiles/skylark.dir/src/main.cpp.o ]; then
+if [ -f build/CMakeFiles/tiny-skylark.dir/src/main.cpp.o ]; then
     pass "main.cpp built successfully"
 else
     fail "main.cpp object missing"

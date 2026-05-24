@@ -1,4 +1,4 @@
-# Skylark
+# Tiny-Skylark
 
 A fast, feature-rich CLI for running Gemma language models locally via [LiteRT-LM](https://github.com/google-ai-edge/LiteRT-LM), with Metal GPU acceleration on macOS.
 
@@ -16,7 +16,7 @@ A fast, feature-rich CLI for running Gemma language models locally via [LiteRT-L
 
 One-line install:
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Phicks-debug/skylark/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/Phicks-debug/tiny-skylark/main/install.sh | bash
 ```
 
 Or with a custom repository:
@@ -24,7 +24,7 @@ Or with a custom repository:
 bash install.sh --repo YOUR_USER/YOUR_REPO
 ```
 
-The binary installs to `~/.local/bin/skylark`. Add it to your PATH:
+The binary installs to `~/.local/bin/tiny-skylark`. Add it to your PATH:
 ```bash
 export PATH="$HOME/.local/bin:$PATH"
 ```
@@ -42,22 +42,22 @@ export PATH="$HOME/.local/bin:$PATH"
 
 ```bash
 # Basic chat with a model
-skylark --model ~/.cache/huggingface/hub/models--litert-community--gemma-4-E2B-it-litert-lm
+tiny-skylark --model ~/.cache/huggingface/hub/models--litert-community--gemma-4-E2B-it-litert-lm
 
 # Download a model from HuggingFace
-skylark --model google/gemma-3-4b-it --download
+tiny-skylark --model google/gemma-3-4b-it --download
 
 # Chat with web search enabled
-skylark --model /path/to/model.litertlm --search --tavily-key YOUR_KEY
+tiny-skylark --model /path/to/model.litertlm --search --tavily-key YOUR_KEY
 
 # Voice input mode
-skylark --model /path/to/model --voice
+tiny-skylark --model /path/to/model --voice
 
 # Debug mode (shows model info, system prompt, thinking channels)
-skylark --model /path/to/model --debug
+tiny-skylark --model /path/to/model --debug
 
 # Attach an image
-skylark --model /path/to/model --image photo.jpg
+tiny-skylark --model /path/to/model --image photo.jpg
 ```
 
 ## Building from Source
@@ -78,7 +78,7 @@ LITERT_LM_DIR=$(python3 -c "import litert_lm, os; print(os.path.dirname(litert_l
 cmake --build build --parallel $(sysctl -n hw.logicalcpu 2>/dev/null || nproc)
 
 # Run
-./build/skylark --help
+./build/tiny-skylark --help
 ```
 
 ## Options
@@ -103,10 +103,10 @@ cmake --build build --parallel $(sysctl -n hw.logicalcpu 2>/dev/null || nproc)
 
 ## Download
 
-Pre-built binaries are available on the [Releases](https://github.com/Phicks-debug/skylark/releases) page:
+Pre-built binaries are available on the [Releases](https://github.com/Phicks-debug/tiny-skylark/releases) page:
 
-- `skylark-darwin-arm64.tar.gz` — macOS Apple Silicon
-- `skylark-linux-x86_64.tar.gz` — Linux x86_64
+- `tiny-skylark-darwin-arm64.tar.gz` — macOS Apple Silicon
+- `tiny-skylark-linux-x64.tar.gz` — Linux x86_64
 
 ## License
 
