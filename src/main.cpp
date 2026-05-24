@@ -553,6 +553,7 @@ struct StreamState {
     bool printed_any = false;
     std::string accumulated;       // accumulate full JSON for tool detection
     std::string active_channel;    // track current channel name
+    std::string channel_buffer;    // accumulate channel content for line-based rendering
     markdown::StreamingRenderer md_renderer;       // markdown renderer for text output
     markdown::RenderState channel_md_state;         // markdown state for channel content
 };
@@ -639,19 +640,40 @@ static void parse_content_array(std::string_view content_arr, F&& on_text) {
         search = obj_end + 1;
     }
 }
-// Channel content (e.g., thinking) is displayed in yellow with markdown rendering.
-// Text content goes through markdown renderer for rich terminal output.
+// Helper: flush channel buffer (render accumulated content as yellow lines)
+static void flush_channel_buffer(StreamState& state) {
+    if (!state.channel_buffer.empty()) {
+        // Split on newlines and render each complete line
+        size_t nl;
+        while ((nl = state.channel_buffer.find('\n')) != std::string::npos) {
+            std::string line = state.channel_buffer.substr(0, nl);
+            std::cout << ansi(Color::Yellow)
+                      << markdown::render_line(line, state.channel_md_state)
+                      << ansi(Color::Reset) << '\n';
+            state.channel_buffer.erase(0, nl + 1);
+        }
+        // Render any remaining partial line
+        if (!state.channel_buffer.empty()) {
+            std::cout << ansi(Color::Yellow)
+                      << markdown::render_line(state.channel_buffer, state.channel_md_state)
+                      << ansi(Color::Reset) << '\n';
+            state.channel_buffer.clear();
+        }
+    }
+}
+
+// Channel content (e.g., thinking) is accumulated and line-buffered for clean display.
+// Text content streams raw characters immediately for token-by-token feel (like Ollama).
 static void display_chunk(std::string_view chunk, StreamState& state) {
     if (chunk.empty()) return;
 
-    // Non-JSON chunks: print via markdown renderer (fallback)
+    // Non-JSON chunks: stream raw characters immediately
     if (chunk[0] != '{' && chunk[0] != '[') {
         if (!state.active_channel.empty()) {
-            state.md_renderer.flush();
-            std::cout << '\n';
+            flush_channel_buffer(state);
             state.active_channel.clear();
         }
-        std::string formatted = state.md_renderer.feed(chunk);
+        std::string formatted = state.md_renderer.feedRaw(chunk);
         if (!formatted.empty()) {
             std::cout << formatted;
             std::cout.flush();
@@ -683,20 +705,26 @@ static void display_chunk(std::string_view chunk, StreamState& state) {
                 // Unescape JSON escapes (\n, \", \\, etc.) to real characters
                 std::string unescaped = json_unescape(raw_content);
                 if (ch_name != state.active_channel) {
+                    // Flush previous channel's accumulated content
+                    flush_channel_buffer(state);
                     if (state.printed_any) {
-                        // Flush markdown buffer before switching channels
                         std::string leftover = state.md_renderer.flush();
                         if (!leftover.empty()) std::cout << leftover;
                         std::cout << '\n';
                     }
                     state.active_channel = ch_name;
                 }
-                // Render channel content through markdown for inline formatting
-                // (bold, italic, code, etc.) in yellow like display_full_response
-                std::cout << ansi(Color::Yellow)
-                          << markdown::render_line(unescaped, state.channel_md_state)
-                          << ansi(Color::Reset) << '\n';
-                state.printed_any = true;
+                // Accumulate channel content; split on newlines for line rendering
+                state.channel_buffer += unescaped;
+                size_t nl;
+                while ((nl = state.channel_buffer.find('\n')) != std::string::npos) {
+                    std::string line = state.channel_buffer.substr(0, nl);
+                    std::cout << ansi(Color::Yellow)
+                              << markdown::render_line(line, state.channel_md_state)
+                              << ansi(Color::Reset) << '\n';
+                    state.channel_buffer.erase(0, nl + 1);
+                    state.printed_any = true;
+                }
             }
 
             pos = vqe + 1;
@@ -706,27 +734,31 @@ static void display_chunk(std::string_view chunk, StreamState& state) {
     // Show tool call indicator if chunk contains tool_calls
     if (chunk.find("\"tool_calls\"") != std::string_view::npos) {
         if (!state.active_channel.empty()) {
-            std::string leftover = state.md_renderer.flush();
-            if (!leftover.empty()) std::cout << leftover;
-            std::cout << '\n';
+            flush_channel_buffer(state);
             state.active_channel.clear();
         }
+        std::string leftover = state.md_renderer.flush();
+        if (!leftover.empty()) std::cout << leftover;
         if (state.printed_any) std::cout << '\n';
         cprint("🔧 Tool call requested...", Color::Cyan);
         state.printed_any = true;
     }
 
     // Parse text from content array: {"content":[{"type":"text","text":"..."}]}
+    // Characters are streamed immediately by StreamingRenderer::feedRaw() for
+    // real-time token-by-token feel (like Ollama). Markdown block-level state
+    // is tracked internally; flush() closes any open code blocks at the end.
     std::string content_arr = json_get_array(chunk, "content");
     if (!content_arr.empty()) {
         parse_content_array(content_arr, [&](const std::string& text) {
             if (!state.active_channel.empty()) {
+                flush_channel_buffer(state);
                 std::string leftover = state.md_renderer.flush();
                 if (!leftover.empty()) std::cout << leftover;
                 std::cout << '\n';
                 state.active_channel.clear();
             }
-            std::string formatted = state.md_renderer.feed(text);
+            std::string formatted = state.md_renderer.feedRaw(text);
             if (!formatted.empty()) {
                 std::cout << formatted;
                 std::cout.flush();
@@ -765,7 +797,12 @@ static void stream_callback(void* data,
 
     if (is_final) {
         if (state->printed_any) {
-            // Flush any remaining markdown buffer
+            // Flush any accumulated channel buffer
+            if (!state->channel_buffer.empty()) {
+                flush_channel_buffer(*state);
+                state->active_channel.clear();
+            }
+            // Flush any remaining markdown buffer (closes code blocks, etc.)
             std::string leftover = state->md_renderer.flush();
             if (!leftover.empty()) std::cout << leftover;
             // Close active channel if any

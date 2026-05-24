@@ -317,6 +317,9 @@ std::string render_line(std::string_view line, RenderState& state) {
 }
 
 // ---- StreamingRenderer ----
+
+// Full rendering: buffers partial lines, renders complete lines with markdown.
+// Used by display_full_response (non-streaming).
 std::string StreamingRenderer::feed(std::string_view chunk) {
     std::string output;
     for (char c : chunk) {
@@ -331,8 +334,28 @@ std::string StreamingRenderer::feed(std::string_view chunk) {
     return output;
 }
 
+// Raw streaming: characters output immediately for real-time token-by-token feel.
+// Block-level state (code blocks) is tracked via render_line() but its
+// formatted output is discarded — only raw characters are emitted.
+std::string StreamingRenderer::feedRaw(std::string_view chunk) {
+    std::string output;
+    std::string line_buf;
+    for (char c : chunk) {
+        output += c;  // emit immediately for real-time feel
+        if (c == '\n') {
+            // Track block-level state from the complete line (discard rendered output)
+            render_line(line_buf, state_);
+            line_buf.clear();
+        } else {
+            line_buf += c;
+        }
+    }
+    return output;
+}
+
 std::string StreamingRenderer::flush() {
     std::string output;
+    // Flush any remaining buffered line (from feed())
     if (!buffer_.empty()) {
         output += render_line(buffer_, state_);
         output += '\n';

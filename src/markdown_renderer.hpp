@@ -20,20 +20,25 @@ struct RenderState {
 // Returns the ANSI-formatted string (without trailing newline).
 std::string render_line(std::string_view line, RenderState& state);
 
-// Render a chunk of streaming text. Buffers partial lines and
-// renders complete lines. Returns formatted output ready to print.
-// Call flush() at the end to get any remaining buffered text.
+// Renders streaming text. Two modes:
+// - feed(): renders complete lines with full markdown (for non-streaming / final display)
+// - feedRaw(): outputs raw chars immediately + tracks block state (for streaming token-by-token)
+// Call flush() at the end to close any open constructs.
 class StreamingRenderer {
 public:
-    // Feed a chunk; returns formatted text (may be empty if line incomplete)
+    // Feed a chunk; buffers and renders complete lines with markdown formatting.
     std::string feed(std::string_view chunk);
 
-    // Get any remaining buffered text after all chunks are done
+    // Feed a chunk for real-time streaming: raw chars output immediately.
+    // Block-level state (code blocks) is tracked internally.
+    std::string feedRaw(std::string_view chunk);
+
+    // Get any remaining buffered text and close open constructs
     std::string flush();
 
 private:
     RenderState state_;
-    std::string buffer_;
+    std::string buffer_;  // used by feed() for line buffering
 };
 
 } // namespace markdown
