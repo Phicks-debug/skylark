@@ -375,6 +375,33 @@ static std::string build_message_json(std::string_view text,
     return json.str();
 }
 
+// ---- Extract a JSON-quoted string (handles \" and \\ escapes) ----
+// `start` must point to the opening ". Returns raw content (with escapes preserved)
+// and sets `end_pos` to position after the closing ".
+static std::string json_extract_raw_string(std::string_view json, size_t start, size_t& end_pos) {
+    if (start >= json.length() || json[start] != '"') {
+        end_pos = start;
+        return "";
+    }
+    std::string raw;
+    size_t i = start + 1;
+    while (i < json.length()) {
+        if (json[i] == '\\' && i + 1 < json.length()) {
+            raw += json[i];
+            raw += json[i + 1];
+            i += 2;
+        } else if (json[i] == '"') {
+            end_pos = i + 1;
+            return raw;
+        } else {
+            raw += json[i];
+            i++;
+        }
+    }
+    end_pos = i;
+    return raw;
+}
+
 // ---- Minimal JSON string extractor ----
 static std::string json_get_str(std::string_view json, std::string_view key) {
     std::string search = std::string("\"") + std::string(key) + "\"";
@@ -553,11 +580,9 @@ struct StreamState {
     std::condition_variable cv;
     bool done = false;
     bool printed_any = false;
+    bool channel_active = false;   // true if currently streaming channel (thinking) content
     std::string accumulated;       // accumulate full JSON for tool detection
-    std::string active_channel;    // track current channel name
-    std::string channel_buffer;    // accumulate channel content for line-based rendering
     markdown::StreamingRenderer md_renderer;       // markdown renderer for text output
-    markdown::RenderState channel_md_state;         // markdown state for channel content
 };
 
 // Extract raw JSON array after a key
@@ -642,38 +667,16 @@ static void parse_content_array(std::string_view content_arr, F&& on_text) {
         search = obj_end + 1;
     }
 }
-// Helper: flush channel buffer (render accumulated content as yellow lines)
-static void flush_channel_buffer(StreamState& state) {
-    if (!state.channel_buffer.empty()) {
-        // Split on newlines and render each complete line
-        size_t nl;
-        while ((nl = state.channel_buffer.find('\n')) != std::string::npos) {
-            std::string line = state.channel_buffer.substr(0, nl);
-            std::cout << ansi(Color::BrightBlack)
-                      << markdown::render_line(line, state.channel_md_state)
-                      << ansi(Color::Reset) << '\n';
-            state.channel_buffer.erase(0, nl + 1);
-        }
-        // Render any remaining partial line
-        if (!state.channel_buffer.empty()) {
-            std::cout << ansi(Color::BrightBlack)
-                      << markdown::render_line(state.channel_buffer, state.channel_md_state)
-                      << ansi(Color::Reset) << '\n';
-            state.channel_buffer.clear();
-        }
-    }
-}
-
-// Channel content (e.g., thinking) is accumulated and line-buffered for clean display.
+// Channel content (e.g., thinking) streams raw characters immediately in gray.
 // Text content streams raw characters immediately for token-by-token feel (like Ollama).
 static void display_chunk(std::string_view chunk, StreamState& state) {
     if (chunk.empty()) return;
 
     // Non-JSON chunks: stream raw characters immediately
     if (chunk[0] != '{' && chunk[0] != '[') {
-        if (!state.active_channel.empty()) {
-            flush_channel_buffer(state);
-            state.active_channel.clear();
+        if (state.channel_active) {
+            std::cout << ansi(Color::Reset) << '\n';
+            state.channel_active = false;
         }
         std::string formatted = state.md_renderer.feedRaw(chunk);
         if (!formatted.empty()) {
@@ -685,59 +688,54 @@ static void display_chunk(std::string_view chunk, StreamState& state) {
     }
 
     // Parse channels: {"channels":{"channel_name":"content",...}}
+    // Uses proper JSON string extraction that handles \" escapes.
     std::string channels_obj = json_get_object(chunk, "channels");
     if (!channels_obj.empty()) {
         size_t pos = 1;  // skip opening {
         while (pos < channels_obj.length()) {
-            auto kq = channels_obj.find('"', pos);
+            // Extract channel name (quoted string)
+            size_t kq = channels_obj.find('"', pos);
             if (kq == std::string::npos) break;
-            auto kqe = channels_obj.find('"', kq + 1);
-            if (kqe == std::string::npos) break;
-            std::string ch_name(channels_obj.substr(kq + 1, kqe - kq - 1));
+            size_t kqe;
+            std::string ch_name = json_extract_raw_string(channels_obj, kq, kqe);
+            // Unescape channel name (JSON key)
+            ch_name = json_unescape(ch_name);
 
             auto colon = channels_obj.find(':', kqe);
             if (colon == std::string::npos) break;
-            auto vq = channels_obj.find('"', colon + 1);
+
+            // Extract channel value (quoted string) with proper escape handling
+            size_t vq = channels_obj.find('"', colon + 1);
             if (vq == std::string::npos) break;
-            auto vqe = channels_obj.find('"', vq + 1);
-            if (vqe == std::string::npos) break;
-            std::string raw_content(channels_obj.substr(vq + 1, vqe - vq - 1));
+            size_t vqe;
+            std::string raw_content = json_extract_raw_string(channels_obj, vq, vqe);
 
             if (!raw_content.empty()) {
-                // Unescape JSON escapes (\n, \", \\, etc.) to real characters
                 std::string unescaped = json_unescape(raw_content);
-                if (ch_name != state.active_channel) {
-                    // Flush previous channel's accumulated content
-                    flush_channel_buffer(state);
+                // Stream channel content immediately in gray, no markdown/line-buffering
+                if (!state.channel_active) {
                     if (state.printed_any) {
                         std::string leftover = state.md_renderer.flush();
                         if (!leftover.empty()) std::cout << leftover;
                         std::cout << '\n';
                     }
-                    state.active_channel = ch_name;
+                    std::cout << ansi(Color::BrightBlack);
+                    state.channel_active = true;
                 }
-                // Accumulate channel content; split on newlines for line rendering
-                state.channel_buffer += unescaped;
-                size_t nl;
-                while ((nl = state.channel_buffer.find('\n')) != std::string::npos) {
-                    std::string line = state.channel_buffer.substr(0, nl);
-                    std::cout << ansi(Color::BrightBlack)
-                              << markdown::render_line(line, state.channel_md_state)
-                              << ansi(Color::Reset) << '\n';
-                    state.channel_buffer.erase(0, nl + 1);
-                    state.printed_any = true;
-                }
+                std::cout << unescaped;
+                std::cout.flush();
+                state.printed_any = true;
             }
 
-            pos = vqe + 1;
+            pos = vqe;
         }
     }
 
     // Show tool call indicator if chunk contains tool_calls
     if (chunk.find("\"tool_calls\"") != std::string_view::npos) {
-        if (!state.active_channel.empty()) {
-            flush_channel_buffer(state);
-            state.active_channel.clear();
+        if (state.channel_active) {
+            std::cout << ansi(Color::Reset) << '\n';
+            state.channel_active = false;
         }
         std::string leftover = state.md_renderer.flush();
         if (!leftover.empty()) std::cout << leftover;
@@ -747,18 +745,12 @@ static void display_chunk(std::string_view chunk, StreamState& state) {
     }
 
     // Parse text from content array: {"content":[{"type":"text","text":"..."}]}
-    // Characters are streamed immediately by StreamingRenderer::feedRaw() for
-    // real-time token-by-token feel (like Ollama). Markdown block-level state
-    // is tracked internally; flush() closes any open code blocks at the end.
     std::string content_arr = json_get_array(chunk, "content");
     if (!content_arr.empty()) {
         parse_content_array(content_arr, [&](const std::string& text) {
-            if (!state.active_channel.empty()) {
-                flush_channel_buffer(state);
-                std::string leftover = state.md_renderer.flush();
-                if (!leftover.empty()) std::cout << leftover;
-                std::cout << '\n';
-                state.active_channel.clear();
+            if (state.channel_active) {
+                std::cout << ansi(Color::Reset) << '\n';
+                state.channel_active = false;
             }
             std::string formatted = state.md_renderer.feedRaw(text);
             if (!formatted.empty()) {
@@ -799,18 +791,14 @@ static void stream_callback(void* data,
 
     if (is_final) {
         if (state->printed_any) {
-            // Flush any accumulated channel buffer
-            if (!state->channel_buffer.empty()) {
-                flush_channel_buffer(*state);
-                state->active_channel.clear();
+            // Close channel color if still active
+            if (state->channel_active) {
+                std::cout << ansi(Color::Reset) << '\n';
+                state->channel_active = false;
             }
             // Flush any remaining markdown buffer (closes code blocks, etc.)
             std::string leftover = state->md_renderer.flush();
             if (!leftover.empty()) std::cout << leftover;
-            // Close active channel if any
-            if (!state->active_channel.empty()) {
-                state->active_channel.clear();
-            }
             std::cout << '\n';
             std::cout.flush();
         }
@@ -888,37 +876,35 @@ static bool download_model(const Config& cfg) {
 static void display_full_response(std::string_view json) {
     if (json.empty()) return;
 
-    markdown::RenderState channel_md_state;
-    markdown::RenderState text_md_state;
-
     // Parse channels: {"channels":{"channel_name":"content",...}}
     std::string channels_obj = json_get_object(json, "channels");
     if (!channels_obj.empty()) {
         size_t pos = 1;  // skip opening {
         while (pos < channels_obj.length()) {
-            auto kq = channels_obj.find('"', pos);
+            // Extract channel name (quoted string)
+            size_t kq = channels_obj.find('"', pos);
             if (kq == std::string::npos) break;
-            auto kqe = channels_obj.find('"', kq + 1);
-            if (kqe == std::string::npos) break;
+            size_t kqe;
+            std::string ch_name = json_extract_raw_string(channels_obj, kq, kqe);
 
             auto colon = channels_obj.find(':', kqe);
             if (colon == std::string::npos) break;
-            auto vq = channels_obj.find('"', colon + 1);
+
+            // Extract channel value (quoted string) with proper escape handling
+            size_t vq = channels_obj.find('"', colon + 1);
             if (vq == std::string::npos) break;
-            auto vqe = channels_obj.find('"', vq + 1);
-            if (vqe == std::string::npos) break;
-            std::string ch_content(channels_obj.substr(vq + 1, vqe - vq - 1));
+            size_t vqe;
+            std::string ch_content = json_extract_raw_string(channels_obj, vq, vqe);
 
             if (!ch_content.empty()) {
-                // Unescape JSON escapes to real characters for display
                 std::string unescaped = json_unescape(ch_content);
-                // Render channel content with markdown (yellow for thinking)
+                // Output channel content as raw gray text, no markdown rendering
                 std::cout << ansi(Color::BrightBlack)
-                          << markdown::render_line(unescaped, channel_md_state)
+                          << unescaped
                           << ansi(Color::Reset) << '\n';
             }
 
-            pos = vqe + 1;
+            pos = vqe;
         }
     }
 
