@@ -1,13 +1,13 @@
 #!/bin/bash
-# install.sh — Install gemma_cli on Linux and macOS
-# Usage: curl -sSL https://raw.githubusercontent.com/phicks/myai/main/install.sh | bash
-#   or:  bash install.sh --repo phicks/myai
+# install.sh — Install skylark on Linux and macOS
+# Usage: curl -sSL https://raw.githubusercontent.com/Phicks-debug/skylark/main/install.sh | bash
+#   or:  bash install.sh --repo Phicks-debug/skylark
 
 set -e
 
 REPO_URL_BASE=
 BIN_DIR=${HOME}/.local/bin
-INSTALL_DIR=${BIN_DIR}/gemma_cli
+INSTALL_DIR=${BIN_DIR}/skylark
 
 while [[ $# -gt 0 ]]; do
   case $1 in
@@ -17,56 +17,56 @@ while [[ $# -gt 0 ]]; do
     --force)   FORCE=true; shift ;;
     --keep-tmp) KEEP_TMP=true; shift ;;
     --help)
-      echo -e 'Usage: install.sh [OPTIONS]\n  --repo USER/REPO   GitHub repo (default: phicks/myai)\n  --force           Overwrite existing binary\n  --keep-tmp        Keep downloaded tarball\n  --help            Show this help'
+      echo -e 'Usage: install.sh [OPTIONS]\n  --repo USER/REPO   GitHub repo (default: Phicks-debug/skylark)\n  --force           Overwrite existing binary\n  --keep-tmp        Keep downloaded tarball\n  --help            Show this help'
       exit 0 ;;
-    *) echo -e \"Unknown option: $1\"; exit 1 ;;
+    *) echo "Unknown option: $1"; exit 1 ;;
   esac
 done
 
-REPO_URL_BASE=${REPO_URL_BASE:-https://github.com/phicks/myai/releases/latest}
+REPO_URL_BASE=${REPO_URL_BASE:-https://github.com/Phicks-debug/skylark/releases/latest}
 PLATFORM=$(uname -s | tr '[:upper:]' '[:lower:]')
 ARCH=$(uname -m)
 
-case \"${PLATFORM}-${ARCH}\" in
-  linux-x86_64)   TARBALL=gemma_cli-linux-x64.tar.gz ;;
-  linux-aarch64)  TARBALL=gemma_cli-linux-arm64.tar.gz ;;
-  darwin-x86_64)  TARBALL=gemma_cli-darwin-x64.tar.gz ;;
-  darwin-arm64)   TARBALL=gemma_cli-darwin-arm64.tar.gz ;;
-  *) echo -e \"Unsupported: ${PLATFORM}-${ARCH}\"; exit 1 ;;
+case "${PLATFORM}-${ARCH}" in
+  linux-x86_64)   TARBALL=skylark-linux-x64.tar.gz ;;
+  linux-aarch64)  TARBALL=skylark-linux-arm64.tar.gz ;;
+  darwin-x86_64)  TARBALL=skylark-darwin-x64.tar.gz ;;
+  darwin-arm64)   TARBALL=skylark-darwin-arm64.tar.gz ;;
+  *) echo "Unsupported: ${PLATFORM}-${ARCH}"; exit 1 ;;
 esac
 
 check_litert() {
-  if ! python3 -c \"import litert_lm\" 2>/dev/null; then
-    echo \"Warning: litert-lm not installed (pip install litert-lm)\"
+  if ! python3 -c "import litert_lm" 2>/dev/null; then
+    echo "Warning: litert-lm not installed (pip install litert-lm)"
   fi
 }
 
 if [[ -f ${INSTALL_DIR} && ${FORCE:-} != true ]]; then
-  echo \"Already installed at ${INSTALL_DIR} (use --force to overwrite)\"
+  echo "Already installed at ${INSTALL_DIR} (use --force to overwrite)"
   exit 0
 fi
 
-echo \"Installing gemma_cli (${PLATFORM}-${ARCH})...\"
+echo "Installing skylark (${PLATFORM}-${ARCH})..."
 check_litert
 mkdir -p ${BIN_DIR}
 TMPDIR=$(mktemp -d)
 TARBALL_PATH=${TMPDIR}/${TARBALL}
 
-echo \"Downloading from GitHub Releases...\"
+echo "Downloading from GitHub Releases..."
 # GitHub Releases store assets at: /releases/download/<tag>/<filename>
-curl -L --retry 3 -o ${TARBALL_PATH} \"${REPO_URL_BASE}/download/${TARBALL}\"
+curl -L --retry 3 -o ${TARBALL_PATH} "${REPO_URL_BASE}/download/${TARBALL}"
 
-echo \"Extracting...\"
+echo "Extracting..."
 tar -xzf ${TARBALL_PATH} -C ${BIN_DIR}
 rm -rf ${TMPDIR}
 
 if [[ -f ${INSTALL_DIR} ]]; then
-  echo -e \"\n✓ Installed to ${INSTALL_DIR}\"
-  echo \"  Add to PATH: export PATH=\\\"${BIN_DIR}:\\$PATH\\\"\"
+  echo -e "\n✓ Installed to ${INSTALL_DIR}"
+  echo "  Add to PATH: export PATH=\"${BIN_DIR}:\$PATH\""
   if [[ ${PLATFORM} == linux ]]; then
-    echo -e \"\nNote: Also run: sudo apt install libportaudio2\"
+    echo -e "\nNote: Also run: sudo apt install libportaudio2"
   fi
 else
-  echo \"Error: install failed\"
+  echo "Error: install failed"
   exit 1
 fi

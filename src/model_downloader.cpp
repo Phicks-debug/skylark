@@ -73,7 +73,7 @@ bool download_file(std::string_view url,
     curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L);
     curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
     curl_easy_setopt(curl, CURLOPT_TIMEOUT, 600L);
-    curl_easy_setopt(curl, CURLOPT_USERAGENT, "GemmaCLI/1.0");
+    curl_easy_setopt(curl, CURLOPT_USERAGENT, "Skylark/1.0");
 
     CURLcode res = curl_easy_perform(curl);
     file.close();
@@ -111,9 +111,9 @@ bool is_local_path(std::string_view path) {
 std::string default_cache_dir() {
     const char* home = std::getenv("HOME");
     if (!home) home = std::getenv("USERPROFILE");
-    if (!home) return "./.cache/gemma-cli";
+    if (!home) return "./.cache/skylark";
 
-    std::string dir = std::string(home) + "/.cache/gemma-cli/models";
+    std::string dir = std::string(home) + "/.cache/skylark/models";
     std::error_code ec;
     fs::create_directories(dir, ec);
     return dir;

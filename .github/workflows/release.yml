@@ -65,15 +65,15 @@ jobs:
       - name: Package tarball
         run: |
           mkdir -p dist
-          cp build/gemma_cli dist/
+          cp build/skylark dist/
           ARCH_NAME=$(uname -m)
           if [[ "$ARCH_NAME" == x86_64 ]]; then
-            ARCH_SUFFIX=x86_64
+            ARCH_SUFFIX=x64
           else
             ARCH_SUFFIX=arm64
           fi
           PLATFORM_NAME=${{ matrix.platform }}
-          tar -czf dist/gemma_cli-${PLATFORM_NAME}-${ARCH_SUFFIX}.tar.gz -C dist gemma_cli
+          tar -czf dist/skylark-${PLATFORM_NAME}-${ARCH_SUFFIX}.tar.gz -C dist skylark
 
       - name: Create or update Release
         env:
@@ -81,17 +81,17 @@ jobs:
         run: |
           if ! gh release view ${{ github.ref_name }} --repo ${{ github.repository }} 2>/dev/null; then
             gh release create ${{ github.ref_name }} \
-              --title "GemmaCLI ${{ github.ref_name }}" \
-              --notes "GemmaCLI ${{ github.ref_name }}" \
+              --title "Skylark ${{ github.ref_name }}" \
+              --notes "Skylark ${{ github.ref_name }}" \
               --repo ${{ github.repository }}
           fi
           ARCH_NAME=$(uname -m)
           if [[ "$ARCH_NAME" == x86_64 ]]; then
-            ARCH_SUFFIX=x86_64
+            ARCH_SUFFIX=x64
           else
             ARCH_SUFFIX=arm64
           fi
           PLATFORM_NAME=${{ matrix.platform }}
           gh release upload ${{ github.ref_name }} \
-            "dist/gemma_cli-${PLATFORM_NAME}-${ARCH_SUFFIX}.tar.gz" \
+            "dist/skylark-${PLATFORM_NAME}-${ARCH_SUFFIX}.tar.gz" \
             --repo ${{ github.repository }}

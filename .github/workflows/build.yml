@@ -69,15 +69,23 @@ jobs:
           ./build/test_json_utils 2>&1 | tail -3
 
       - name: Package release tarball
+        id: package
         run: |
           mkdir -p dist
-          cp build/gemma_cli dist/
-          tar -czf dist/gemma_cli-${{ matrix.platform }}-x64.tar.gz -C dist gemma_cli
+          cp build/skylark dist/
+          ARCH_NAME=$(uname -m)
+          if [[ "$ARCH_NAME" == x86_64 ]]; then
+            ARCH_SUFFIX=x64
+          else
+            ARCH_SUFFIX=arm64
+          fi
+          echo "arch=$ARCH_SUFFIX" >> $GITHUB_OUTPUT
+          tar -czf dist/skylark-${{ matrix.platform }}-${ARCH_SUFFIX}.tar.gz -C dist skylark
 
       - name: Upload release tarball
         uses: actions/upload-artifact@v4
         with:
-          name: gemma_cli-${{ matrix.platform }}-x64
-          path: dist/gemma_cli-${{ matrix.platform }}-x64.tar.gz
+          name: skylark-${{ matrix.platform }}-${{ steps.package.outputs.arch }}
+          path: dist/skylark-${{ matrix.platform }}-${{ steps.package.outputs.arch }}.tar.gz
           retention-days: 30
 

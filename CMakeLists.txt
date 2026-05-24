@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(GemmaCLI VERSION 1.0.0 LANGUAGES CXX)
+project(Skylark VERSION 1.0.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -102,16 +102,16 @@ set(SOURCES
 # ============================================================
 # Main executable
 # ============================================================
-add_executable(gemma_cli ${SOURCES})
+add_executable(skylark ${SOURCES})
 
-target_include_directories(gemma_cli PRIVATE
+target_include_directories(skylark PRIVATE
     ${CURL_INCLUDE_DIRS}
     ${PORTAUDIO_INCLUDE_DIRS}
     ${LITERT_LM_DIR}
     src/
 )
 
-target_link_libraries(gemma_cli PRIVATE
+target_link_libraries(skylark PRIVATE
     "${LITERT_LM_LIB}"
     "${CURL_LIBRARIES}"
     "${PORTAUDIO_LIBRARIES}"
@@ -124,41 +124,41 @@ target_link_libraries(gemma_cli PRIVATE
 if(APPLE)
     get_filename_component(CURL_LIB_DIR "${CURL_LIBRARIES}" DIRECTORY)
     get_filename_component(PORTAUDIO_LIB_DIR "${PORTAUDIO_LIBRARIES}" DIRECTORY)
-    target_link_options(gemma_cli PRIVATE
+    target_link_options(skylark PRIVATE
         -Wl,-rpath,"${LITERT_LM_DIR}"
         -Wl,-rpath,"${CURL_LIB_DIR}"
         -Wl,-rpath,"${PORTAUDIO_LIB_DIR}"
     )
 else()
-    target_link_options(gemma_cli PRIVATE
+    target_link_options(skylark PRIVATE
         -Wl,-rpath,"${LITERT_LM_DIR}"
         -Wl,--disable-new-dtags
     )
-    target_compile_definitions(gemma_cli PRIVATE _GNU_SOURCE)
+    target_compile_definitions(skylark PRIVATE _GNU_SOURCE)
 endif()
 
 # ============================================================
 # Compiler flags
 # ============================================================
 if(CMAKE_CXX_COMPILER_ID MATCHES "(GNU|Clang)")
-    target_compile_options(gemma_cli PRIVATE
+    target_compile_options(skylark PRIVATE
         -Wall
         -Wextra
         -Wpedantic
         -Wno-unused-parameter
     )
 elseif(MSVC)
-    target_compile_options(gemma_cli PRIVATE /W4 /WX-)
+    target_compile_options(skylark PRIVATE /W4 /WX-)
 endif()
 
 # ============================================================
 # Installation
 # ============================================================
-install(TARGETS gemma_cli DESTINATION bin)
+install(TARGETS skylark DESTINATION bin)
 
 # Print summary
 message(STATUS "==========================================")
-message(STATUS "GemmaCLI Build Configuration")
+message(STATUS "Skylark Build Configuration")
 message(STATUS "==========================================")
 message(STATUS "  LitertLM lib : ${LITERT_LM_LIB}")
 message(STATUS "  LibCurl      : ${CURL_LIBRARIES}")
