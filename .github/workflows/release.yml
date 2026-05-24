@@ -61,7 +61,7 @@ jobs:
             -DLITERT_LM_DIR=${{ steps.litert-path.outputs.path }}
 
       - name: Build
-        run: cmake --build build -j$(nproc)
+        run: cmake --build build --parallel $(sysctl -n hw.logicalcpu 2>/dev/null || nproc)
 
       - name: Package tarball
         run: |
