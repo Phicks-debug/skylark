@@ -1,33 +1,32 @@
-# Tiny-Habibi
+# tiny-habibi
 
-A fast, feature-rich CLI for running Gemma language models locally via [LiteRT-LM](https://github.com/google-ai-edge/LiteRT-LM), with Metal GPU acceleration on macOS.
+A fast, agentic CLI locally via [LiteRT-LM](https://github.com/google-ai-edge/LiteRT-LM), with Metal GPU acceleration on macOS and Linux.
 
 **Command:** `bb`
 
 ## Features
 
 - **Streaming chat** with token-by-token output and **Markdown rendering** in terminal
-- **Auto-download** — no `--model` needed; defaults to Gemma 4 E2B and auto-downloads from HuggingFace
-- **Thinking/reasoning mode** — Gemma 4 E2B model reasoning displayed in yellow
 - **Voice input** — record audio and send to the model
 - **Image & video input** — attach images/video frames to messages
 - **Web search** — Tavily-powered search tool integration
-- **Model download** — pull models directly from HuggingFace
-- **GPU backend** — Metal on macOS, OpenCL/Vulkan on Linux
 
 ## Installation
 
 One-line install (no build required — downloads a pre-built binary):
+
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Phicks-debug/tiny-habibi/main/install.sh | bash
 ```
 
 Or with a custom repository:
+
 ```bash
 bash install.sh --repo YOUR_USER/YOUR_REPO
 ```
 
 The binary installs to `~/.local/bin/bb`. Add it to your PATH:
+
 ```bash
 export PATH="$HOME/.local/bin:$PATH"
 ```
@@ -35,9 +34,11 @@ export PATH="$HOME/.local/bin:$PATH"
 ### Prerequisites for the binary
 
 - **Python 3.11+** with `litert-lm` installed:
+
   ```bash
   pip install litert-lm
   ```
+
 - That's it! **No system packages needed** — the binary is self-contained.
 
 > **Note:** `portaudio` / `libportaudio2` / `libcurl` are **only** needed when **building from source**. The pre-built binary links everything statically or bundles it.
@@ -70,7 +71,7 @@ bb --image photo.jpg
 ## Platform Support
 
 | Platform | Architecture | Pre-built Binary | Build from Source |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | **macOS** | Apple Silicon (arm64) | ✅ `tiny-habibi-darwin-arm64.tar.gz` | ✅ |
 | **macOS** | Intel (x86_64) | ❌ (build from source) | ✅ |
 | **Linux** | x86_64 | ✅ `tiny-habibi-linux-x64.tar.gz` | ✅ |
