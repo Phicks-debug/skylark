@@ -90,8 +90,8 @@ jobs:
         run: |
           if ! gh release view ${{ github.ref_name }} --repo ${{ github.repository }} 2>/dev/null; then
             gh release create ${{ github.ref_name }} \
-              --title "tiny-habibi v0.1.0" \
-              --notes "tiny-habibi v0.1.0 — initial release" \
+              --title "tiny-habibi ${{ github.ref_name }}" \
+              --notes "tiny-habibi ${{ github.ref_name }}" \
               --repo ${{ github.repository }}
           fi
           ARCH_NAME=$(uname -m)
