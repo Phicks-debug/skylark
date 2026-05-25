@@ -1006,10 +1006,39 @@ static bool setup_engine_and_conversation(
     std::string& out_active_backend,
     std::string& out_system_prompt) {
     
-    // Suppress verbose LiteRT-LM logging
-    litert_lm_set_min_log_level(3); // WARNING level
+    // Note: GLOG/TF_CPP env vars are set at main() start (before library loads)
+    // This API call provides additional suppression at the LiteRT level
+    litert_lm_set_min_log_level(3); // Suppress WARNING and below
 
-    // ---- Create engine settings ----
+    // Suppress stderr and stdout during engine creation to hide NPU/WebGPU/library warnings
+    // These warnings are non-fatal and expected on macOS (NPU not available, WebGPU fallback)
+    int saved_stderr = -1;
+    int saved_stdout = -1;
+    int devnull_fd = -1;
+    bool io_redirected = false;
+    
+    if (!cfg.debug) {
+        devnull_fd = open("/dev/null", O_WRONLY);
+        if (devnull_fd != -1) {
+            saved_stderr = dup(STDERR_FILENO);
+            saved_stdout = dup(STDOUT_FILENO);
+            if (saved_stderr != -1 && saved_stdout != -1) {
+                dup2(devnull_fd, STDERR_FILENO);
+                dup2(devnull_fd, STDOUT_FILENO);
+                close(devnull_fd);
+                io_redirected = true;
+            } else {
+                // Rollback on failure
+                if (saved_stderr != -1) { dup2(saved_stderr, STDERR_FILENO); close(saved_stderr); }
+                if (saved_stdout != -1) { dup2(saved_stdout, STDOUT_FILENO); close(saved_stdout); }
+                close(devnull_fd);
+                saved_stderr = -1;
+                saved_stdout = -1;
+                devnull_fd = -1;
+            }
+        }
+    }
+
     const char* vision_be = cfg.vision_backend.empty() ? "cpu"
                                                        : cfg.vision_backend.c_str();
     const char* audio_be = cfg.audio_backend.empty() ? "cpu"
@@ -1022,6 +1051,13 @@ static bool setup_engine_and_conversation(
         audio_be);
 
     if (!engine_settings) {
+        // Restore stderr and stdout before reporting error
+        if (io_redirected) {
+            dup2(saved_stderr, STDERR_FILENO);
+            dup2(saved_stdout, STDOUT_FILENO);
+            close(saved_stderr);
+            close(saved_stdout);
+        }
         cprintln("❌ Failed to create engine settings.", Color::Red);
         return false;
     }
@@ -1038,19 +1074,13 @@ static bool setup_engine_and_conversation(
     }
 
     // ---- Create engine ----
-    cprint("Loading model", Color::Cyan);
-    cprint("...", Color::Dim);
-    std::cout.flush();
-
     std::string active_backend = cfg.backend;
     LiteRtLmEngine* engine = litert_lm_engine_create(engine_settings);
     litert_lm_engine_settings_delete(engine_settings);
 
     if (!engine) {
-        // If GPU backend failed, silently retry with CPU
+        // If GPU backend failed, retry with CPU
         if (active_backend != "cpu") {
-            std::cout << '\n';
-            cprintln("⚠️  GPU unavailable, falling back to CPU", Color::Dim);
             active_backend = "cpu";
             engine_settings = litert_lm_engine_settings_create(
                 cfg.model_path.c_str(), "cpu", vision_be, audio_be);
@@ -1063,21 +1093,36 @@ static bool setup_engine_and_conversation(
             if (cfg.speculative_decoding) {
                 litert_lm_engine_settings_set_enable_speculative_decoding(engine_settings, true);
             }
-            cprint("Loading model", Color::Cyan);
-            cprint("...", Color::Dim);
-            std::cout.flush();
             engine = litert_lm_engine_create(engine_settings);
             litert_lm_engine_settings_delete(engine_settings);
+            
+            if (cfg.debug) {
+                cprintln("⚠️  GPU unavailable, fell back to CPU", Color::Dim);
+            }
         }
+        
         if (!engine) {
-            std::cout << '\n';
+            // Restore stderr and stdout before reporting error
+            if (io_redirected) {
+                dup2(saved_stderr, STDERR_FILENO);
+                dup2(saved_stdout, STDOUT_FILENO);
+                close(saved_stderr);
+                close(saved_stdout);
+            }
             cprintln("❌ Failed to create engine. Check model path and backend.", Color::Red);
             return false;
         }
     }
 
-    std::cout << '\n';
-    cprintln("✅ Model loaded successfully!", Color::Green);
+    // Restore stderr and stdout
+    if (io_redirected) {
+        dup2(saved_stderr, STDERR_FILENO);
+        dup2(saved_stdout, STDOUT_FILENO);
+        close(saved_stderr);
+        close(saved_stdout);
+    }
+
+    if (cfg.debug) cprintln("✅ Model loaded successfully!", Color::Green);
 
     // ---- Read system prompt ----
     std::string system_prompt = read_system_prompt(cfg);
@@ -1613,12 +1658,21 @@ static void chat_loop(const Config& cfg,
 
 // ---- Main ----
 int main(int argc, char* argv[]) {
+    // Suppress verbose LiteRT-LM and TensorFlow Lite logging EARLY
+    // These must be set before any LiteRT library calls to be effective
+    // TF_CPP_MIN_LOG_LEVEL: 0=INFO, 1=WARNING, 2=ERROR, 3=FATAL
+    // GLOG_minloglevel: same scale for Google Log
+    // GLOG_logtostderr: 1=write to stderr (our redirect will catch it)
+    setenv("TF_CPP_MIN_LOG_LEVEL", "3", 1);  // Suppress INFO, WARNING, ERROR
+    setenv("GLOG_minloglevel", "3", 1);      // Suppress all GLOG except FATAL
+    setenv("GLOG_logtostderr", "1", 1);      // Force GLOG to stderr
+
     Config cfg = parse_args(argc, argv);
 
     // Default model: Gemma 4 E2B via LiteRT-LM community repo
     if (cfg.model_path.empty()) {
         cfg.model_path = "litert-community/gemma-4-E2B-it-litert-lm";
-        cprintln("📦 No model specified, defaulting to: " + cfg.model_path, Color::Dim);
+        if (cfg.debug) cprintln("📦 No model specified, defaulting to: " + cfg.model_path, Color::Dim);
     }
 
     // Validate numeric parameters
@@ -1669,11 +1723,10 @@ int main(int argc, char* argv[]) {
         if (!cached_resolved.empty()) {
             cfg.model_path = cached_resolved;
             cprintln("📂 Using cached model: " + cached_resolved, Color::Dim);
-        } else {
-            std::string hf_resolved = resolve_model_path(hf_cache);
-            if (!hf_resolved.empty()) {
-                cfg.model_path = hf_resolved;
-                cprintln("📂 Found model in HuggingFace cache: " + hf_resolved, Color::Dim);
+        } else {        std::string hf_resolved = resolve_model_path(hf_cache);
+                if (!hf_resolved.empty()) {
+                    cfg.model_path = hf_resolved;
+                    if (cfg.debug) cprintln("📂 Found model in HuggingFace cache: " + hf_resolved, Color::Dim);
             } else {
                 cprintln("📥 Model not found locally. Auto-downloading from HuggingFace...", Color::Cyan);
                 cprintln("   (this may take a few minutes — press Ctrl+C to cancel)", Color::Dim);
@@ -1731,15 +1784,38 @@ int main(int argc, char* argv[]) {
         return 1;
     }
     
+    // Show model loaded message only in debug mode
+    if (cfg.debug) {
+        std::string model_info = "Model: " + cfg.model_path + " (backend: " + active_backend + ")";
+        cprintln("✅ " + model_info, Color::Green);
+    }
+    
     // Start chat - either one-shot mode or interactive
     if (!cfg.one_shot_prompt.empty()) {
         // One-shot mode: execute single prompt and exit
-        cprintln("💬 One-shot mode: " + cfg.one_shot_prompt, Color::Dim);
+        // Keep stderr suppressed during one-shot to hide GLOG library warnings (NPU, WebGPU, mel_filterbank)
+        // But keep stdout open so the model response is visible to the user
+        int saved_stderr_one_shot = -1;
+        int devnull_fd_one_shot = -1;
+        
+        if (!cfg.debug) {
+            devnull_fd_one_shot = open("/dev/null", O_WRONLY);
+            if (devnull_fd_one_shot != -1) {
+                saved_stderr_one_shot = dup(STDERR_FILENO);
+                if (saved_stderr_one_shot != -1) {
+                    dup2(devnull_fd_one_shot, STDERR_FILENO);
+                    close(devnull_fd_one_shot);
+                } else {
+                    close(devnull_fd_one_shot);
+                    devnull_fd_one_shot = -1;
+                }
+            }
+        }
+        
+        if (cfg.debug) cprintln("💬 One-shot mode: " + cfg.one_shot_prompt, Color::Dim);
         
         // Set bash permission to bypass for one-shot mode (no user to confirm)
         bash_tool::set_permission_mode(bash_tool::PermissionMode::Bypass);
-        
-        // Build message
         std::string msg_json = build_message_json(cfg.one_shot_prompt, cfg.image_path, "");
         
         if (cfg.no_stream) {
@@ -1814,7 +1890,13 @@ int main(int argc, char* argv[]) {
         litert_lm_conversation_delete(conversation);
         litert_lm_engine_delete(engine);
         
-        cprintln("\n👋 Done!", Color::BoldWhite);
+        // Restore stderr before printing goodbye
+        if (saved_stderr_one_shot != -1) {
+            dup2(saved_stderr_one_shot, STDERR_FILENO);
+            close(saved_stderr_one_shot);
+        }
+        
+        if (cfg.debug) cprintln("\n👋 Done!", Color::BoldWhite);
     } else {
         // Interactive chat mode - chat_loop() handles cleanup internally
         chat_loop(cfg, engine, conversation, system_prompt);
