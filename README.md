@@ -1,6 +1,6 @@
 # tiny-habibi
 
-A fast, agentic CLI locally via [LiteRT-LM](https://github.com/google-ai-edge/LiteRT-LM), with Metal GPU acceleration on macOS and Linux.
+A fast, agentic CLI for running Gemma models locally via [LiteRT-LM](https://github.com/google-ai-edge/LiteRT-LM), with Metal GPU acceleration on macOS and Linux.
 
 **Command:** `bb`
 
@@ -9,7 +9,29 @@ A fast, agentic CLI locally via [LiteRT-LM](https://github.com/google-ai-edge/Li
 - **Streaming chat** with token-by-token output and **Markdown rendering** in terminal
 - **Voice input** — record audio and send to the model
 - **Image & video input** — attach images/video frames to messages
-- **Web search** — Tavily-powered search tool integration
+- **Web search** — Tavily-powered search tool (always enabled, set `TAVILY_API_KEY`)
+- **Bash tool** — execute shell commands with human-in-the-loop permission control
+- **Dynamic date/time** — system prompt includes current date/time for better context
+- **Conversation persistence** — save/resume conversations with SQLite database
+- **/permissions command** — toggle between Ask (confirm before bash) and Bypass modes
+
+## Tools
+
+Tools are **always enabled** — no `--search` flag needed.
+
+### web_search
+Search the internet for up-to-date information using Tavily. Set your API key:
+```bash
+export TAVILY_API_KEY=your_api_key_here
+bb
+```
+
+### bash
+Execute shell commands locally. Two permission modes:
+- **Ask** (default): Prompts for confirmation before executing
+- **Bypass**: Executes without confirmation
+
+Toggle modes with `/permissions` command in the chat.
 
 ## Installation
 
@@ -28,7 +50,7 @@ bash install.sh --repo YOUR_USER/YOUR_REPO
 The binary installs to `~/.local/bin/bb`. Add it to your PATH:
 
 ```bash
-export PATH="$HOME/.local/bin:$PATH"
+export PATH=\"$HOME/.local/bin:$PATH\"
 ```
 
 ### Prerequisites for the binary
@@ -39,7 +61,11 @@ export PATH="$HOME/.local/bin:$PATH"
   pip install litert-lm
   ```
 
-- That's it! **No system packages needed** — the binary is self-contained.
+- **TAVILY_API_KEY** environment variable for web search (optional):
+
+  ```bash
+  export TAVILY_API_KEY=your_api_key
+  ```
 
 > **Note:** `portaudio` / `libportaudio2` / `libcurl` are **only** needed when **building from source**. The pre-built binary links everything statically or bundles it.
 
@@ -55,9 +81,6 @@ bb --model ~/.cache/huggingface/hub/models--litert-community--gemma-4-E2B-it-lit
 # Download a different model from HuggingFace
 bb --model google/gemma-3-4b-it --download
 
-# Chat with web search enabled
-bb --search --tavily-key YOUR_KEY
-
 # Voice input mode
 bb --voice
 
@@ -66,7 +89,29 @@ bb --debug
 
 # Attach an image
 bb --image photo.jpg
+
+# Set Tavily API key for web search
+export TAVILY_API_KEY=your_key
+bb
 ```
+
+## Commands
+
+| Command | Description |
+|---|---|
+| `/exit`, `/quit` | Exit the chat |
+| `/help` | Show available commands |
+| `/clear` | Clear conversation and start fresh |
+| `/model` | Show current model and backend |
+| `/resume` | List and resume previous conversations |
+| `/delete` | Delete saved conversations |
+| `/permissions` | Toggle bash permission mode (Ask/Bypass) |
+
+### Conversation Management
+
+- **/resume** — Shows list of saved conversations with timestamps. Select one to continue chatting with full context.
+- **/delete** — Shows list with current conversation highlighted. Delete old conversations to save space.
+- Conversations are automatically saved to `~/.cache/tiny-habibi/conversations.db`
 
 ## Platform Support
 
@@ -95,8 +140,8 @@ brew install curl portaudio cmake
 sudo apt install libcurl4-openssl-dev portaudio19-dev pkg-config cmake
 
 # 3. Build — uses the Python that has litert-lm installed
-LITERT_LM_DIR=$(python3 -c "import litert_lm, os; print(os.path.dirname(litert_lm.__file__))") \
-  cmake -B build -DCMAKE_BUILD_TYPE=Release -DLITERT_LM_DIR="$LITERT_LM_DIR"
+LITERT_LM_DIR=$(python3 -c \"import litert_lm, os; print(os.path.dirname(litert_lm.__file__))\") \\
+  cmake -B build -DCMAKE_BUILD_TYPE=Release -DLITERT_LM_DIR=\"$LITERT_LM_DIR\"
 cmake --build build --parallel $(sysctl -n hw.logicalcpu 2>/dev/null || nproc)
 
 # 4. Run
@@ -114,8 +159,6 @@ cmake --build build --parallel $(sysctl -n hw.logicalcpu 2>/dev/null || nproc)
 | `--voice, -v` | Enable voice input mode |
 | `--image PATH` | Attach image to first message |
 | `--video PATH` | Attach video (first frame) to first message |
-| `--search` | Enable Tavily web search tool |
-| `--tavily-key KEY` | Tavily API key (or set `TAVILY_API_KEY` env var) |
 | `--debug` | Print debug info (model, system prompt, etc.) |
 | `--no-stream` | Disable streaming output |
 | `--no-thinking` | Disable model thinking/reasoning mode |
@@ -124,6 +167,8 @@ cmake --build build --parallel $(sysctl -n hw.logicalcpu 2>/dev/null || nproc)
 | `--max-tokens N` | Maximum output tokens (default: 4096) |
 | `--top-p P` | Top-P sampling (default: 0.95) |
 | `--temperature T` | Sampling temperature (default: 1.0) |
+
+> **Note:** Web search and bash tools are **always enabled**. Set `TAVILY_API_KEY` environment variable for web search to work.
 
 ## License
 

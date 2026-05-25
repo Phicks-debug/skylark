@@ -176,8 +176,24 @@ static Config parse_args(int argc, char* argv[]) {
     return cfg;
 }
 
+// ---- Get current datetime in readable format ----
+static std::string get_current_datetime() {
+    std::time_t now = std::time(nullptr);
+    std::tm local_tm;
+#if defined(_WIN32) || defined(__MINGW32__)
+    localtime_s(&local_tm, &now);
+#else
+    localtime_r(&now, &local_tm);
+#endif
+    char buffer[128];
+    strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S %Z", &local_tm);
+    return std::string(buffer);
+}
+
 // ---- Read AGENTS.md or system prompt file ----
 static std::string read_system_prompt(const Config& cfg) {
+    std::string datetime_prefix = "Current date: " + get_current_datetime() + "\n\n";
+    
     // Try cfg.system_prompt_path first
     if (!cfg.system_prompt_path.empty() && fs::exists(cfg.system_prompt_path)) {
         std::ifstream file(cfg.system_prompt_path);
@@ -189,7 +205,7 @@ static std::string read_system_prompt(const Config& cfg) {
             auto start = content.find_first_not_of(" \t\n\r");
             auto end = content.find_last_not_of(" \t\n\r");
             if (start != std::string::npos) {
-                return content.substr(start, end - start + 1);
+                return datetime_prefix + content.substr(start, end - start + 1);
             }
         }
     }
@@ -204,13 +220,14 @@ static std::string read_system_prompt(const Config& cfg) {
             auto start = content.find_first_not_of(" \t\n\r");
             auto end = content.find_last_not_of(" \t\n\r");
             if (start != std::string::npos) {
-                return content.substr(start, end - start + 1);
+                return datetime_prefix + content.substr(start, end - start + 1);
             }
         }
     }
 
     // Fallback: default system prompt with tool-use instructions
-    return "You are a helpful assistant with access to tools.\n\n"
+    return datetime_prefix + 
+           "You are a helpful assistant with access to tools.\n\n"
            "You have access to a web_search tool that can search the internet for "
            "up-to-date information. Use it when asked about current events, recent "
            "news, or anything that requires fresh data.\n\n"
@@ -1222,25 +1239,36 @@ static void chat_loop(const Config& cfg) {
 
                 auto conversations = db.list_conversations();
                 if (conversations.empty()) {
-                    cprintln("No saved conversations found.", Color::Dim);
+                    cprintln("📭 No saved conversations found.", Color::Dim);
                     continue;
                 }
 
-                cprintln("Saved conversations:", Color::BrightWhite);
+                print_separator(Color::Cyan);
+                cprintln("  📋 SAVED CONVERSATIONS", Color::BoldCyan);
+                print_separator(Color::Cyan);
+                cprintln("", Color::Reset);
+                
                 for (size_t i = 0; i < conversations.size(); i++) {
                     std::string label = conversations[i].title.empty()
                         ? "(untitled)"
                         : conversations[i].title;
-                    if (label.length() > 60) {
-                        label = label.substr(0, 57) + "...";
+                    
+                    // Format date for readability
+                    std::string date = conversations[i].created_at;
+                    if (date.length() >= 19) {
+                        date = date.substr(0, 16); // YYYY-MM-DD HH:MM
                     }
-                    cprintln("  " + std::to_string(i + 1) + ". " + label, Color::BrightWhite);
-                    cprintln("     " + conversations[i].created_at + " | " +
-                             conversations[i].model_path + " | " +
-                             conversations[i].backend, Color::Dim);
+                    
+                    cprint("  " + std::to_string(i + 1) + ". ", Color::BoldYellow);
+                    cprintln(label, Color::BrightWhite);
+                    cprint("     └─ ", Color::Dim);
+                    cprintln(date + " · " + conversations[i].backend, Color::Dim);
                 }
-
-                cprint("Select conversation (1-" + std::to_string(conversations.size()) +
+                
+                cprintln("", Color::Reset);
+                print_separator(Color::Dim);
+                
+                cprint("Select (1-" + std::to_string(conversations.size()) +
                        ") or 0 to cancel: ", Color::BoldGreen);
                 std::cout.flush();
 
@@ -1262,9 +1290,9 @@ static void chat_loop(const Config& cfg) {
                 auto& selected = conversations[static_cast<size_t>(choice - 1)];
                 auto history = db.get_messages(selected.id);
 
-                cprintln("Resuming conversation: " +
+                cprintln("\n✅ Resuming: " +
                          (selected.title.empty() ? "(untitled)" : selected.title),
-                         Color::Cyan);
+                         Color::Green);
 
                 // Rebuild conversation with history
                 litert_lm_conversation_delete(conversation);
@@ -1285,26 +1313,46 @@ static void chat_loop(const Config& cfg) {
 
                 auto conversations = db.list_conversations();
                 if (conversations.empty()) {
-                    cprintln("No saved conversations to delete.", Color::Dim);
+                    cprintln("📭 No conversations to delete.", Color::Dim);
                     continue;
                 }
 
-                cprintln("Saved conversations:", Color::BrightWhite);
+                print_separator(Color::Red);
+                cprintln("  🗑️  DELETE CONVERSATION", Color::BoldRed);
+                print_separator(Color::Red);
+                cprintln("", Color::Reset);
+                
                 for (size_t i = 0; i < conversations.size(); i++) {
                     std::string label = conversations[i].title.empty()
                         ? "(untitled)"
                         : conversations[i].title;
-                    if (label.length() > 60) {
-                        label = label.substr(0, 57) + "...";
+                    
+                    // Highlight if this is the current conversation
+                    bool is_current = (conversations[i].id == current_conv_id);
+                    
+                    // Format date for readability
+                    std::string date = conversations[i].created_at;
+                    if (date.length() >= 19) {
+                        date = date.substr(0, 16); // YYYY-MM-DD HH:MM
                     }
-                    cprintln("  " + std::to_string(i + 1) + ". " + label, Color::BrightWhite);
-                    cprintln("     " + conversations[i].created_at + " | " +
-                             conversations[i].model_path + " | " +
-                             conversations[i].backend, Color::Dim);
+                    
+                    if (is_current) {
+                        cprint("  " + std::to_string(i + 1) + ". ", Color::BoldRed);
+                        cprint(label, Color::BrightWhite);
+                        cprintln(" ← current", Color::BoldGreen);
+                    } else {
+                        cprint("  " + std::to_string(i + 1) + ". ", Color::BoldYellow);
+                        cprintln(label, Color::BrightWhite);
+                    }
+                    cprint("     └─ ", Color::Dim);
+                    cprintln(date + " · " + conversations[i].backend, Color::Dim);
                 }
-
-                cprint("Delete conversation (1-" + std::to_string(conversations.size()) +
-                       ") or 0 to cancel: ", Color::BoldGreen);
+                
+                cprintln("", Color::Reset);
+                print_separator(Color::Dim);
+                
+                cprint("Delete (1-" + std::to_string(conversations.size()) +
+                       ") or 0 to cancel: ", Color::BoldRed);
                 std::cout.flush();
 
                 std::string choice_str;
