@@ -1,6 +1,7 @@
 // Tavily web search implementation using libcurl
 
 #include "tavily_search.hpp"
+#include "bash_tool.hpp"
 #include "json_utils.hpp"
 #include "terminal.hpp"
 #include <curl/curl.h>
@@ -218,25 +219,31 @@ std::string format_results_json(std::string_view query,
 }
 
 std::string get_tool_definition() {
-    return R"([
-  {
-    "type": "function",
-    "function": {
-      "name": "web_search",
-      "description": "Search the web for information on a given query. Returns a list of search results with titles, URLs, and content snippets.",
-      "parameters": {
-        "type": "object",
-        "properties": {
-          "query": {
-            "type": "string",
-            "description": "The search query to look up"
-          }
-        },
-        "required": ["query"]
-      }
-    }
-  }
-])";
+    std::string bash_def = bash_tool::get_tool_definition();
+    
+    // Build web_search as a JSON object (not array) then combine with bash array
+    std::string ws_obj = ""
+        "  {\n"
+        "    \"type\": \"function\",\n"
+        "    \"function\": {\n"
+        "      \"name\": \"web_search\",\n"
+        "      \"description\": \"Search the web for information on a given query. Returns a list of search results with titles, URLs, and content snippets.\",\n"
+        "      \"parameters\": {\n"
+        "        \"type\": \"object\",\n"
+        "        \"properties\": {\n"
+        "          \"query\": {\n"
+        "            \"type\": \"string\",\n"
+        "            \"description\": \"The search query to look up\"\n"
+        "          }\n"
+        "        },\n"
+        "        \"required\": [\"query\"]\n"
+        "      }\n"
+        "    }\n"
+        "  }";
+    
+    // Return: [web_search_obj, ...bash_tool_elements]
+    // bash_def is [ { bash_obj } ], we strip outer [] and prepend our array
+    return std::string("[") + ws_obj + "," + bash_def.substr(1);
 }
 
 } // namespace tavily_search

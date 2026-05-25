@@ -8,6 +8,7 @@
 #include "model_downloader.hpp"
 #include "audio_recorder.hpp"
 #include "tavily_search.hpp"
+#include "bash_tool.hpp"
 #include "markdown_renderer.hpp"
 #include "json_utils.hpp"
 #include "conversation_db.hpp"
@@ -96,8 +97,8 @@ Input Options:
   --no-thinking          Disable model thinking/reasoning mode
 
 Tool Options:
-  --search               Enable Tavily web search tool
-                         (requires TAVILY_API_KEY environment variable)
+  (tools are always enabled - web_search and bash)
+  Set TAVILY_API_KEY environment variable for web search to work
 
 System Options:
   --system-prompt PATH   Path to system prompt file (default: AGENTS.md in CWD)
@@ -431,6 +432,45 @@ static std::string execute_tool_calls(const std::vector<ToolCall>& calls,
                          << "\"name\":\"web_search\","
                          << "\"response\":\"Error: No query provided or API key missing.\""
                          << "}]}";
+            }
+        } else if (calls[i].name == "bash") {
+            // Parse command from arguments JSON
+            std::string command = json_utils::json_get_str(calls[i].arguments_json, "command");
+            
+            if (command.empty()) {
+                responses << "{\"role\":\"tool\",\"content\":["
+                         << "{\"type\":\"tool_response\","
+                         << "\"name\":\"bash\","
+                         << "\"response\":\"Error: No command provided.\""
+                         << "}]}";
+            } else {
+                // Check permission mode
+                bool proceed = (bash_tool::get_permission_mode() == bash_tool::PermissionMode::Bypass);
+                
+                if (!proceed) {
+                    // Ask for permission
+                    cprint("⚠️  Bash tool requested: " + command, Color::Yellow);
+                    cprint("\nRun this command? [Y/n] ", Color::BoldYellow);
+                    std::cout.flush();
+                    std::string answer;
+                    if (std::getline(std::cin, answer)) {
+                        // Check for 'y', 'Y', or empty (default yes)
+                        if (answer.empty() || answer == "y" || answer == "Y") {
+                            proceed = true;
+                        }
+                    }
+                }
+                
+                if (proceed) {
+                    terminal::cprintln("📋 Executing: " + command, terminal::Color::Cyan);
+                    std::string output = bash_tool::execute(command);
+                    std::string resp_json = bash_tool::format_response_json(command, output, true);
+                    responses << resp_json;
+                } else {
+                    std::string denied = "Permission denied by user.";
+                    std::string resp_json = bash_tool::format_response_json(command, denied, false);
+                    responses << resp_json;
+                }
             }
         } else {
             // Unknown tool — send error
@@ -849,14 +889,12 @@ static void print_debug_info(const Config& cfg,
 
     // Tools
     cprintln("\nTools:", Color::BoldWhite);
-    if (cfg.enable_search) {
-        std::cout << "  web_search:   enabled\n";
-        std::cout << "  tavily_key:   " << (cfg.tavily_api_key.empty() ? "(not set)" : "[set]") << "\n";
-        std::string tools_def = tavily_search::get_tool_definition();
-        std::cout << "  tools_def:    " << tools_def.length() << " chars JSON\n";
-    } else {
-        std::cout << "  web_search:   disabled\n";
-    }
+    std::cout << "  web_search:   enabled (always)\n";
+    std::cout << "  bash:         enabled (always)\n";
+    std::cout << "  tavily_key:   " << (cfg.tavily_api_key.empty() ? "(not set)" : "[set]") << "\n";
+    std::cout << "  bash_perms:   " << (bash_tool::get_permission_mode() == bash_tool::PermissionMode::Ask ? "Ask" : "Bypass") << "\n";
+    std::string tools_def = tavily_search::get_tool_definition();
+    std::cout << "  tools_def:    " << tools_def.length() << " chars JSON\n";
 
     // Input modes
     cprintln("\nInput modes:", Color::BoldWhite);
@@ -907,11 +945,9 @@ static LiteRtLmConversation* create_conversation_with_history(
             "{\"enable_thinking\": true}");
     }
 
-    // Set tools if search enabled
-    if (cfg.enable_search) {
-        std::string tools = tavily_search::get_tool_definition();
-        litert_lm_conversation_config_set_tools(conv_cfg, tools.c_str());
-    }
+    // Set tools - always enabled (both web_search and bash)
+    std::string tools = tavily_search::get_tool_definition();
+    litert_lm_conversation_config_set_tools(conv_cfg, tools.c_str());
 
     // Set history messages if any
     if (!history.empty()) {
@@ -1111,6 +1147,17 @@ static void chat_loop(const Config& cfg) {
                 cprintln("✅ Conversation cleared.", Color::Green);
                 continue;
             }
+            if (line == "/permissions") {
+                auto mode = bash_tool::get_permission_mode();
+                if (mode == bash_tool::PermissionMode::Ask) {
+                    bash_tool::set_permission_mode(bash_tool::PermissionMode::Bypass);
+                    cprintln("🔓 Bash permission mode: Bypass (no confirmation)", Color::Green);
+                } else {
+                    bash_tool::set_permission_mode(bash_tool::PermissionMode::Ask);
+                    cprintln("🔒 Bash permission mode: Ask (confirm before execution)", Color::Yellow);
+                }
+                continue;
+            }
             }
 
             // Start recording
@@ -1296,6 +1343,17 @@ static void chat_loop(const Config& cfg) {
                     }
                 } else {
                     cprintln("❌ Failed to delete conversation.", Color::Red);
+                }
+                continue;
+            }
+            if (line == "/permissions") {
+                auto mode = bash_tool::get_permission_mode();
+                if (mode == bash_tool::PermissionMode::Ask) {
+                    bash_tool::set_permission_mode(bash_tool::PermissionMode::Bypass);
+                    cprintln("🔓 Bash permission mode: Bypass (no confirmation)", Color::Green);
+                } else {
+                    bash_tool::set_permission_mode(bash_tool::PermissionMode::Ask);
+                    cprintln("🔒 Bash permission mode: Ask (confirm before execution)", Color::Yellow);
                 }
                 continue;
             }

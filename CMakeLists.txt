@@ -152,6 +152,7 @@ set(SOURCES
     src/model_downloader.cpp
     src/audio_recorder.cpp
     src/tavily_search.cpp
+    src/bash_tool.cpp
     src/markdown_renderer.cpp
     src/conversation_db.cpp
 )
