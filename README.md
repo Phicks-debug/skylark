@@ -109,13 +109,15 @@ bb
 | `/clear` | Clear conversation and start fresh |
 | `/model` | Show current model and backend |
 | `/resume` | List and resume previous conversations |
-| `/delete` | Delete saved conversations |
-| `/permissions` | Toggle bash permission mode (Ask/Bypass) |
+| `/delete` | Delete individual saved conversations |
+| `/delete all` | Delete **all** saved conversations (requires confirmation) |
+| `/permissions` | Toggle bash permission mode (Ask ⇄ Bypass) |
 
 ### Conversation Management
 
 - **/resume** — Shows list of saved conversations with timestamps. Select one to continue chatting with full context.
-- **/delete** — Shows list with current conversation highlighted. Delete old conversations to save space.
+- **/delete** — Shows list with current conversation highlighted. Delete individual conversations to save space.
+- **/delete all** — Deletes the entire conversation history after typing `yes` to confirm. This cannot be undone.
 - Conversations are automatically saved to `~/.cache/tiny-habibi/conversations.db`
 
 ## Platform Support
@@ -174,7 +176,11 @@ cmake --build build --parallel $(sysctl -n hw.logicalcpu 2>/dev/null || nproc)
 | `--top-p P` | Top-P sampling (default: 0.95) |
 | `--temperature T` | Sampling temperature (default: 1.0) |
 
-> **Note:** Web search and bash tools are **always enabled**. Set `TAVILY_API_KEY` environment variable for web search to work.
+> **Note:** You may see a `mel_filterbank` GLOG warning at startup. This is a harmless internal library diagnostic from the Gemma audio model — it's non-fatal and does not affect functionality. Web search and bash tools are **always enabled**. Set `TAVILY_API_KEY` environment variable for web search to work.
+
+## Known Issues
+
+- **mel_filterbank warning:** A harmless GLOG diagnostic warning appears at startup (`W0000 mel_filterbank.cc:137`). This is internal to the Gemma model's audio processing and cannot be suppressed from within the app — GLOG initializes during library load before `main()` runs. The model works correctly despite this warning.
 
 ## License
 

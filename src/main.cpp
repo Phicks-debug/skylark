@@ -1212,7 +1212,7 @@ static void chat_loop(const Config& cfg,
                 line = line.substr(start, line.find_last_not_of(" \t\n\r") - start + 1);
             if (line == "/exit" || line == "/quit") break;
             if (line == "/help") {
-                cprintln("Voice mode: press ENTER to record. Commands: /exit, /quit, /model, /resume, /delete, /clear, /help", Color::Dim);
+                cprintln("Voice mode: press ENTER to record. Commands: /exit, /quit, /model, /resume, /delete, /delete all, /clear, /permissions, /help", Color::Dim);
                 continue;
             }
             if (line == "/model") {
@@ -1224,6 +1224,10 @@ static void chat_loop(const Config& cfg,
             }
             if (line == "/delete") {
                 cprintln("⚠️  /delete is only available in text mode. Use text mode to delete conversations.", Color::Yellow);
+                continue;
+            }
+            if (line.rfind("/delete all", 0) == 0) {
+                cprintln("⚠️  /delete all is only available in text mode. Use text mode.", Color::Yellow);
                 continue;
             }
             if (line == "/resume") {
@@ -1287,7 +1291,7 @@ static void chat_loop(const Config& cfg,
             // ---- Handle commands ----
             if (line == "/exit" || line == "/quit") break;
             if (line == "/help") {
-                cprintln("Commands: /exit, /quit, /clear, /model, /resume, /delete, /help", Color::Dim);
+                cprintln("Commands: /exit, /quit, /clear, /model, /resume, /delete, /delete all, /permissions, /help", Color::Dim);
                 continue;
             }
             if (line == "/model") {
@@ -1387,11 +1391,54 @@ static void chat_loop(const Config& cfg,
                 conv_title = selected.title;
                 continue;
             }
-            if (line == "/delete") {
+            if (line == "/delete" || line == "/delete all") {
                 if (!db.is_open()) {
                     cprintln("⚠️  Conversation database not available.", Color::Yellow);
                     continue;
                 }
+
+                // Check for "all" variant
+                bool delete_all = (line == "/delete all");
+
+                if (delete_all) {
+                    auto conversations = db.list_conversations();
+                    if (conversations.empty()) {
+                        cprintln("📭 No conversations to delete.", Color::Dim);
+                        continue;
+                    }
+
+                    // Confirmation prompt
+                    cprintln("⚠️  This will DELETE ALL " + std::to_string(conversations.size()) +
+                             " saved conversations. This cannot be undone.", Color::BoldRed);
+                    cprint("Type 'yes' to confirm: ", Color::BoldYellow);
+                    std::cout.flush();
+                    std::string confirm;
+                    if (!std::getline(std::cin, confirm)) break;
+                    // Accept yes/Yes/YES/y/Y
+                    bool confirmed = (confirm == "yes" || confirm == "YES" || confirm == "Yes" ||
+                                      confirm == "y" || confirm == "Y");
+                    if (confirmed) {
+                        if (db.delete_all_conversations()) {
+                            cprintln("🗑️  All conversations deleted.", Color::Green);
+                            // Reset to fresh conversation
+                            litert_lm_conversation_delete(conversation);
+                            conversation = create_conversation_with_history(engine, cfg, system_prompt, {});
+                            if (!conversation) {
+                                cprintln("❌ Failed to create new conversation.", Color::Red);
+                                break;
+                            }
+                            current_conv_id = db.create_conversation(cfg.model_path, active_backend, "");
+                            conv_title.clear();
+                        } else {
+                            cprintln("❌ Failed to delete all conversations.", Color::Red);
+                        }
+                    } else {
+                        cprintln("Cancelled.", Color::Dim);
+                    }
+                    continue;
+                }
+
+                // Individual delete (existing behavior)
 
                 auto conversations = db.list_conversations();
                 if (conversations.empty()) {

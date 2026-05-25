@@ -67,6 +67,9 @@ public:
     // Delete a conversation and all its messages (CASCADE).
     bool delete_conversation(int64_t conversation_id);
 
+    // Delete all conversations and their messages.
+    bool delete_all_conversations();
+
     // Get the default database path (~/.cache/tiny-habibi/conversations.db).
     static std::string default_path();
 

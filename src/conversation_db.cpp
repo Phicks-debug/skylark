@@ -206,6 +206,23 @@ bool ConversationDB::delete_conversation(int64_t conversation_id) {
     return ok;
 }
 
+bool ConversationDB::delete_all_conversations() {
+    if (!db_) return false;
+    sqlite3* db = to_sqlite3(db_);
+
+    // Delete all messages first (CASCADE would handle it, but being explicit is cleaner)
+    char* err_msg = nullptr;
+    if (sqlite3_exec(db, "DELETE FROM messages;", nullptr, nullptr, &err_msg) != SQLITE_OK) {
+        sqlite3_free(err_msg);
+        return false;
+    }
+    if (sqlite3_exec(db, "DELETE FROM conversations;", nullptr, nullptr, &err_msg) != SQLITE_OK) {
+        sqlite3_free(err_msg);
+        return false;
+    }
+    return true;
+}
+
 ConversationInfo ConversationDB::get_conversation(int64_t conversation_id) {
     ConversationInfo info;
     info.id = -1;
