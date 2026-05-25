@@ -78,6 +78,11 @@ bb
 # Use a specific model
 bb --model ~/.cache/huggingface/hub/models--litert-community--gemma-4-E2B-it-litert-lm
 
+# Inline 1-shot prompt — single query and exit
+bb "What is 2+2?"
+bb "Search for latest AI news"
+bb "What is the capital of France?"
+
 # Download a different model from HuggingFace
 bb --model google/gemma-3-4b-it --download
 
@@ -155,6 +160,7 @@ cmake --build build --parallel $(sysctl -n hw.logicalcpu 2>/dev/null || nproc)
 | Option | Description |
 |---|---|
 | `--model PATH` | Model path or HuggingFace repo ID (default: `litert-community/gemma-4-E2B-it-litert-lm`) |
+| `bb "prompt"` | Inline 1-shot prompt — single query and exit (no interactive chat) |
 | `--backend BACKEND` | Hardware backend: `cpu` or `gpu` (default: `gpu`) |
 | `--voice, -v` | Enable voice input mode |
 | `--image PATH` | Attach image to first message |

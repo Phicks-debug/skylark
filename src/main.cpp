@@ -45,6 +45,7 @@ struct Config {
     std::string tavily_api_key;
     std::string image_path;            // one-shot image input
     std::string video_path;            // one-shot video input (first frame)
+    std::string one_shot_prompt;       // inline 1-shot prompt (bb "prompt")
     bool voice_mode = false;
     bool enable_search = false;
     bool no_stream = false;
@@ -107,8 +108,10 @@ System Options:
 
 Examples:
   )" << prog << R"( --model /path/to/model.safetensors
+  )" << prog << R"( "What is 2+2?"           # inline 1-shot prompt
+  )" << prog << R"( "Search for latest AI news"  # web search works in 1-shot too
   )" << prog << R"( --model google/gemma-3-4b-it --download
-  )" << prog << R"( --model /path/to/model --voice --search
+  )" << prog << R"( --model /path/to/model --voice
   )" << prog << R"( --model /path/to/model --image photo.jpg
 )" << std::endl;
 }
@@ -166,6 +169,16 @@ static Config parse_args(int argc, char* argv[]) {
         else if (arg == "--system-prompt")        cfg.system_prompt_path = next();
         else if (arg == "--no-thinking")          cfg.no_thinking = true;
         else if (arg == "--debug")                  cfg.debug = true;
+        else if (arg.size() > 0 && arg[0] != '-') {
+            // Non-option argument: treat as inline 1-shot prompt
+            // Join all remaining args as the prompt (handles multi-word prompts)
+            std::string prompt = arg;
+            for (int j = i + 1; j < argc; j++) {
+                prompt += std::string(" ") + argv[j];
+            }
+            cfg.one_shot_prompt = prompt;
+            break; // All remaining args are part of the prompt
+        }
         else {
             std::cerr << "Unknown option: " << arg << "\n";
             std::cerr << "Try '" << argv[0] << " --help' for usage.\n";
@@ -985,8 +998,14 @@ static LiteRtLmConversation* create_conversation_with_history(
     return conversation;
 }
 
-// ---- Chat loop ----
-static void chat_loop(const Config& cfg) {
+// ---- Setup engine and conversation (shared between one-shot and interactive) ----
+static bool setup_engine_and_conversation(
+    const Config& cfg,
+    LiteRtLmEngine*& out_engine,
+    LiteRtLmConversation*& out_conversation,
+    std::string& out_active_backend,
+    std::string& out_system_prompt) {
+    
     // Suppress verbose LiteRT-LM logging
     litert_lm_set_min_log_level(3); // WARNING level
 
@@ -1004,7 +1023,7 @@ static void chat_loop(const Config& cfg) {
 
     if (!engine_settings) {
         cprintln("❌ Failed to create engine settings.", Color::Red);
-        return;
+        return false;
     }
 
     // Configure engine settings
@@ -1053,7 +1072,7 @@ static void chat_loop(const Config& cfg) {
         if (!engine) {
             std::cout << '\n';
             cprintln("❌ Failed to create engine. Check model path and backend.", Color::Red);
-            return;
+            return false;
         }
     }
 
@@ -1069,8 +1088,26 @@ static void chat_loop(const Config& cfg) {
     if (!conversation) {
         cprintln("❌ Failed to create conversation.", Color::Red);
         litert_lm_engine_delete(engine);
-        return;
-    }    // ---- Open conversation database (ensure parent dirs exist first) ----
+        return false;
+    }
+    
+    out_engine = engine;
+    out_conversation = conversation;
+    out_active_backend = active_backend;
+    out_system_prompt = system_prompt;
+    return true;
+}
+
+// ---- Chat loop ----
+static void chat_loop(const Config& cfg,
+                      LiteRtLmEngine* engine,
+                      LiteRtLmConversation* conversation,
+                      const std::string& system_prompt) {
+    // Suppress verbose LiteRT-LM logging
+    litert_lm_set_min_log_level(3); // WARNING level
+    
+    std::string active_backend = cfg.backend;
+    (void)engine; // engine is kept for future use but conversation handles the state
     std::string db_path = conversation_db::ConversationDB::default_path();
     {
         std::error_code ec;
@@ -1684,7 +1721,103 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    // Start chat
-    chat_loop(cfg);
+    // Setup engine and conversation (shared between one-shot and interactive)
+    LiteRtLmEngine* engine = nullptr;
+    LiteRtLmConversation* conversation = nullptr;
+    std::string active_backend;
+    std::string system_prompt;
+    
+    if (!setup_engine_and_conversation(cfg, engine, conversation, active_backend, system_prompt)) {
+        return 1;
+    }
+    
+    // Start chat - either one-shot mode or interactive
+    if (!cfg.one_shot_prompt.empty()) {
+        // One-shot mode: execute single prompt and exit
+        cprintln("💬 One-shot mode: " + cfg.one_shot_prompt, Color::Dim);
+        
+        // Set bash permission to bypass for one-shot mode (no user to confirm)
+        bash_tool::set_permission_mode(bash_tool::PermissionMode::Bypass);
+        
+        // Build message
+        std::string msg_json = build_message_json(cfg.one_shot_prompt, cfg.image_path, "");
+        
+        if (cfg.no_stream) {
+            // Non-streaming one-shot
+            std::string current_msg = msg_json;
+            const int MAX_TOOL_ROUNDS = 3;
+            
+            for (int round = 0; round < MAX_TOOL_ROUNDS; round++) {
+                LiteRtLmJsonResponse* response = litert_lm_conversation_send_message(
+                    conversation, current_msg.c_str(), "{}", nullptr);
+                
+                if (!response) {
+                    if (round == 0) cprintln("❌ No response received.", Color::Red);
+                    break;
+                }
+                
+                const char* text = litert_lm_json_response_get_string(response);
+                if (!text) {
+                    litert_lm_json_response_delete(response);
+                    break;
+                }
+                
+                std::string resp_str(text);
+                auto tool_calls = extract_tool_calls(resp_str);
+                
+                if (!tool_calls.empty()) {
+                    std::string tool_responses = execute_tool_calls(tool_calls, cfg.tavily_api_key);
+                    litert_lm_json_response_delete(response);
+                    current_msg = tool_responses;
+                    continue;
+                }
+                
+                display_full_response(resp_str);
+                litert_lm_json_response_delete(response);
+                break;
+            }
+        } else {
+            // Streaming one-shot
+            std::string current_msg = msg_json;
+            const int MAX_TOOL_ROUNDS = 3;
+            
+            for (int round = 0; round < MAX_TOOL_ROUNDS; round++) {
+                StreamState state;
+                int result = litert_lm_conversation_send_message_stream(
+                    conversation, current_msg.c_str(), "{}", nullptr, stream_callback, &state);
+                
+                if (result != 0) {
+                    cprintln("❌ Failed to send message (stream error).", Color::Red);
+                    break;
+                }
+                
+                // Wait for completion
+                {
+                    std::unique_lock<std::mutex> lock(state.mtx);
+                    state.cv.wait(lock, [&state] { return state.done; });
+                }
+                
+                // Check for tool calls
+                if (!state.accumulated.empty()) {
+                    auto tool_calls = extract_tool_calls(state.accumulated);
+                    if (!tool_calls.empty()) {
+                        std::string tool_responses = execute_tool_calls(tool_calls, cfg.tavily_api_key);
+                        current_msg = tool_responses;
+                        continue;
+                    }
+                }
+                break;
+            }
+        }
+        
+        // Cleanup
+        litert_lm_conversation_delete(conversation);
+        litert_lm_engine_delete(engine);
+        
+        cprintln("\n👋 Done!", Color::BoldWhite);
+    } else {
+        // Interactive chat mode - chat_loop() handles cleanup internally
+        chat_loop(cfg, engine, conversation, system_prompt);
+    }
     return 0;
 }
