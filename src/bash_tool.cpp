@@ -165,7 +165,7 @@ std::string get_tool_definition() {
         "\n        \"properties\": {" +
         "\n          \"command\": {" +
         "\n            \"type\": \"string\"," +
-        "\n            \"description\": \"The bash command to execute. Can be any valid bash command. Output is captured and returned.\"" +
+        "\n            \"description\": \"The bash command to execute. Can be any valid bash command including: creating files (cat << 'EOF' > file), running code (python3 file.py), listing directories (ls -la), checking file existence (test -f file), installing packages (pip install pkg), and any other shell operation. Output is captured and returned.\"" +
         "\n          }" +
         "\n        }," +
         "\n        \"required\": [\"command\"]" +
