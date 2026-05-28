@@ -94,9 +94,20 @@ inline std::string json_get_str(std::string_view json, std::string_view key) {
     if (colon == std::string_view::npos) return "";
     auto open = json.find('"', colon + 1);
     if (open == std::string_view::npos) return "";
-    auto close = json.find('"', open + 1);
-    if (close == std::string_view::npos) return "";
-    return std::string(json.substr(open + 1, close - open - 1));
+    
+    // Find the closing quote, handling escaped quotes
+    size_t close = open + 1;
+    while (close < json.length()) {
+        if (json[close] == '\\') {
+            close += 2; // skip escaped character
+        } else if (json[close] == '"') {
+            break;
+        } else {
+            close++;
+        }
+    }
+    if (close >= json.length()) return "";
+    return json_unescape(json.substr(open + 1, close - open - 1));
 }
 
 // ---- Extract raw JSON object after a key (for nested objects) ----
